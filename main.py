@@ -121,12 +121,16 @@ def money(value, currency):
 def format_sale(sale):
     product = sale.get("product") or {}
     info = get_order_info(sale_id(sale)) or {}
-    name = info.get("name") or product.get("name") or sale.get("name") or "Товар"
+    # название берём из списка продаж: в подробностях заказа вместо него бывает код
+    name = product.get("name") or sale.get("name") or info.get("name") or "Товар"
     lines = ["🛒 <b>Новый заказ на GGSel</b>", f"Товар: {html.escape(str(name))}"]
 
     if info.get("cnt_goods"):
+        cnt = str(info["cnt_goods"])
+        if cnt.endswith(".0"):
+            cnt = cnt[:-2]
         unit = info.get("unit_goods") or ""
-        lines.append(f"Количество: {html.escape(str(info['cnt_goods']))} {html.escape(str(unit))}".strip())
+        lines.append(f"Количество: {html.escape(cnt)} {html.escape(str(unit))}".strip())
 
     currency = info.get("currency_type")
     if info.get("amount") is not None:

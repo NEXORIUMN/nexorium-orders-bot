@@ -94,16 +94,54 @@ def sale_id(sale):
     return str(sale.get("invoice_id") or sale.get("id") or sale.get("inv") or "")
 
 
+def get_order_info(invoice_id):
+    """Подробности заказа: реальная сумма, выплата, количество. None при ошибке."""
+    try:
+        r = requests.get(
+            f"{API_BASE}/purchase/info/{invoice_id}",
+            params={"token": get_token()},
+            headers={"Accept": "application/json"},
+            timeout=20,
+        )
+        if not r.ok:
+            print(f"Заказ {invoice_id}: подробности не получены, код {r.status_code}: {r.text[:200]}")
+            return None
+        return r.json().get("content") or None
+    except Exception as e:
+        print(f"Заказ {invoice_id}: подробности не получены:", hide(e)[:200])
+        return None
+
+
+def money(value, currency):
+    sign = {"RUB": "₽", "RUR": "₽", "WMR": "₽", "USD": "$", "WMZ": "$",
+            "EUR": "€", "WME": "€"}.get(str(currency or "").upper(), str(currency or ""))
+    return f"{value} {sign}".strip()
+
+
 def format_sale(sale):
     product = sale.get("product") or {}
-    name = product.get("name") or sale.get("name") or "Товар"
+    info = get_order_info(sale_id(sale)) or {}
+    name = info.get("name") or product.get("name") or sale.get("name") or "Товар"
     lines = ["🛒 <b>Новый заказ на GGSel</b>", f"Товар: {html.escape(str(name))}"]
-    for key in ("price_rub", "price", "amount", "price_usd"):
-        price = product.get(key) or sale.get(key)
-        if price:
-            suffix = {"price_rub": " ₽", "price_usd": " $"}.get(key, "")
-            lines.append(f"Цена: {price}{suffix}")
-            break
+
+    if info.get("cnt_goods"):
+        unit = info.get("unit_goods") or ""
+        lines.append(f"Количество: {html.escape(str(info['cnt_goods']))} {html.escape(str(unit))}".strip())
+
+    currency = info.get("currency_type")
+    if info.get("amount") is not None:
+        lines.append(f"Сумма заказа: {money(info['amount'], currency)}")
+        if info.get("profit") is not None:
+            lines.append(f"Ваша выплата: {money(info['profit'], currency)}")
+    else:
+        # подробности не получены - показываем хотя бы цену карточки
+        for key in ("price_rub", "price_usd"):
+            price = product.get(key)
+            if price:
+                suffix = {"price_rub": " ₽", "price_usd": " $"}[key]
+                lines.append(f"Цена карточки: {price}{suffix}")
+                break
+
     lines.append(f"Заказ №: {sale_id(sale)}")
     if sale.get("date"):
         lines.append(f"Дата: {html.escape(str(sale['date']))}")

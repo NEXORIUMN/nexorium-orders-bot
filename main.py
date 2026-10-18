@@ -26,7 +26,10 @@ API_KEY = os.getenv("GGSEL_API_KEY", "").strip()
 TG_TOKEN = os.getenv("TG_TOKEN", "").strip()
 TG_CHAT_ID = os.getenv("TG_CHAT_ID", "").strip()
 
-CHECK_EVERY = int(os.getenv("CHECK_EVERY", "30"))  # секунд между проверками
+CHECK_EVERY = int(os.getenv("CHECK_EVERY", "60"))  # секунд между проверками
+# Пауза после ошибки: растёт 1 → 2 → 4 → ... до 15 минут, чтобы не долбить GGSel
+BACKOFF_START = 60
+BACKOFF_MAX = 15 * 60
 TOP = int(os.getenv("TOP", "20"))                   # сколько последних продаж брать
 API_BASE = "https://seller.ggsel.com/api_sellers/api"
 STATE_FILE = os.getenv("STATE_FILE", "seen_orders.json")
@@ -164,6 +167,16 @@ def send_telegram(text):
         raise RuntimeError(f"Telegram не принял сообщение: {r.text[:300]}")
 
 
+def notify(text):
+    """Служебное сообщение в группу. Не падает, если Telegram недоступен."""
+    try:
+        send_telegram(text)
+        return True
+    except Exception as e:
+        print("Telegram:", hide(e)[:300])
+        return False
+
+
 def load_seen():
     try:
         with open(STATE_FILE, "r", encoding="utf-8") as f:
@@ -188,19 +201,26 @@ def main():
         print("НЕ ЗАДАНЫ ПЕРЕМЕННЫЕ:", ", ".join(missing))
         sys.exit(1)
 
-    try:
-        sales = get_last_sales()
-    except Exception as e:
-        print("НЕ УДАЛОСЬ ПОЛУЧИТЬ ЗАКАЗЫ GGSEL:", hide(e))
-        sys.exit(1)
+    # Раньше при ошибке бот завершался, Railway тут же перезапускал его,
+    # и вход в API шёл каждые пару секунд — из-за этого GGSel и блокировал.
+    # Теперь бот не падает, а ждёт с растущей паузой.
+    delay = BACKOFF_START
+    warned = False
+    while True:
+        try:
+            sales = get_last_sales()
+            break
+        except Exception as e:
+            print(f"НЕ УДАЛОСЬ ПОЛУЧИТЬ ЗАКАЗЫ GGSEL (жду {delay // 60} мин):", hide(e)[:300])
+            if not warned:
+                warned = notify("⚠️ Бот GGSel не может подключиться к API GGSel. "
+                                "Пробую снова, заказы пока проверяйте в кабинете.")
+            time.sleep(delay)
+            delay = min(delay * 2, BACKOFF_MAX)
     print(f"GGSel: связь есть, получено продаж: {len(sales)}.")
 
-    try:
-        send_telegram("✅ Бот заказов GGSel запущен. Жду новые заказы.")
-    except Exception as e:
-        print("НЕТ СВЯЗИ С TELEGRAM:", hide(e)[:300])
-        sys.exit(1)
-    print("Telegram: сообщение о запуске отправлено.")
+    if notify("✅ Бот заказов GGSel запущен, связь с GGSel есть. Жду новые заказы."):
+        print("Telegram: сообщение о запуске отправлено.")
 
     seen = load_seen()
     if seen is None:
@@ -208,18 +228,29 @@ def main():
         save_seen(seen)
 
     print("Работаю.")
+    delay = BACKOFF_START
+    errors = 0
     while True:
         try:
             sales = get_last_sales()
+            if errors >= 3:
+                notify("✅ Связь с GGSel восстановлена.")
+            errors, delay = 0, BACKOFF_START
             new = [s for s in sales if sale_id(s) and sale_id(s) not in seen]
             for sale in reversed(new):
                 send_telegram(format_sale(sale))
                 seen.append(sale_id(sale))
                 save_seen(seen)
                 print("Отправлен заказ", sale_id(sale))
+            time.sleep(CHECK_EVERY)
         except Exception as e:
-            print("Ошибка (попробую снова):", hide(e)[:200])
-        time.sleep(CHECK_EVERY)
+            errors += 1
+            print(f"Ошибка (попробую снова через {delay // 60} мин):", hide(e)[:300])
+            if errors == 3:
+                notify("⚠️ Бот GGSel потерял связь с API GGSel. "
+                       "Пробую снова, заказы пока проверяйте в кабинете.")
+            time.sleep(delay)
+            delay = min(delay * 2, BACKOFF_MAX)
 
 
 if __name__ == "__main__":

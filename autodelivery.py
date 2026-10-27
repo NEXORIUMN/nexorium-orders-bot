@@ -17,6 +17,7 @@
 Переменные окружения:
     EPINBY_API_KEY  - X-API-Key из бота EpinBy (обязательно для автовыдачи)
     AUTODELIVERY    - "on" чтобы включить (по умолчанию выключено)
+    LOW_BALANCE     - порог в $, ниже которого бот напоминает пополнить баланс (по умолчанию 20)
     DRY_RUN         - "1" (по умолчанию): ничего не покупать, только показать в группе план.
                       "0": боевой режим, деньги списываются.
     STATE_DIR       - папка для файла состояния (на Railway - путь к подключённому Volume)
@@ -41,6 +42,7 @@ STATE_DIR = os.getenv("STATE_DIR", ".").strip() or "."
 STATE_FILE = os.path.join(STATE_DIR, "deliveries.json")
 PRODUCTS_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "products.json")
 
+LOW_BALANCE = float(os.getenv("LOW_BALANCE", "20") or 20)  # предупреждать, если баланс ниже ($)
 POLL_EVERY = 15          # секунд между проверками статуса заказа в EpinBy
 POLL_TIMEOUT = 20 * 60   # сколько ждать выполнения одного пакета
 
@@ -190,6 +192,19 @@ def epinby_get(path):
 
 def epinby_post(path, body, idem_key=None):
     return _epinby("POST", path, body, idem_key)
+
+
+def _balance_line():
+    """Строка с актуальным балансом EpinBy (и предупреждение, если денег мало)."""
+    try:
+        bal = float(epinby_get("/getMe").get("balance"))
+    except Exception as e:
+        print("Баланс EpinBy не получен:", _hide(e)[:150])
+        return "\n💰 Баланс EpinBy: не удалось получить"
+    line = f"\n💰 Баланс EpinBy: ${bal:.2f}"
+    if bal < LOW_BALANCE:
+        line += f"\n⚠️ Баланс ниже ${LOW_BALANCE:.0f} — пора пополнить!"
+    return line
 
 
 # ---------------------------------------------------------------- разбор заказа
@@ -357,7 +372,7 @@ def _deliver(invoice_id, product, info, resume=None):
         _set_status(invoice_id, status="dry_run")
         _notify(f"🧪 Тест. Заказ {invoice_id}: {amount} UC → игрок {who}.\n"
                 f"Купил бы: {plan_text} (≈ ${est:.2f}).\n"
-                f"Ничего не куплено (DRY_RUN=1).")
+                f"Ничего не куплено (DRY_RUN=1)." + _balance_line())
         return
 
     _set_status(invoice_id, status="in_progress")
@@ -373,12 +388,13 @@ def _deliver(invoice_id, product, info, resume=None):
         _notify(f"❗ Заказ {invoice_id}: выдача остановилась.\n"
                 f"Игрок: {who}\nВыдано: {' + '.join(map(str, done)) or 'ничего'}\n"
                 f"Не выдано: {' + '.join(map(str, rest))} UC\nПричина: {err}\n"
-                f"Доделайте вручную.")
+                f"Доделайте вручную." + _balance_line())
         return
 
     _set_status(invoice_id, status="done", done=done)
     _send_chat(invoice_id, MSG_DONE)
-    _notify(f"✅ Заказ {invoice_id} выдан автоматически: {amount} UC ({plan_text}) → {who}.")
+    _notify(f"✅ Заказ {invoice_id} выдан автоматически: {amount} UC ({plan_text}) → {who}."
+            + _balance_line())
 
 
 def _buy_pack(invoice_id, idx, size, player_id):

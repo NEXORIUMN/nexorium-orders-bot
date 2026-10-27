@@ -62,6 +62,10 @@ MSG_BAD_ID = (
     "Здравствуйте! Не удалось найти аккаунт с ID {player_id}. "
     "Пожалуйста, проверьте ID и напишите его в этот чат — менеджер выполнит заказ."
 )
+MSG_BAD_USERNAME = (
+    "Здравствуйте! Не удалось найти Telegram-аккаунт {username}. "
+    "Пожалуйста, проверьте username (вида @username) и напишите его в этот чат — менеджер выполнит заказ."
+)
 MSG_MANUAL = (
     "Здравствуйте! Ваш заказ принят. Автоматическая выдача задерживается, "
     "менеджер выполнит его в ближайшее время. Спасибо за ожидание!"
@@ -316,7 +320,10 @@ def _resume_unfinished():
 
 def _deliver_safe(invoice_id, product, info, resume=None):
     try:
-        _deliver(invoice_id, product, info, resume)
+        if product.get("kind") == "tg_stars":
+            _deliver_stars(invoice_id, product, info, resume)
+        else:
+            _deliver(invoice_id, product, info, resume)
     except Exception as e:
         _set_status(invoice_id, status="error", error=_hide(e)[:300])
         _notify(f"❗ Автовыдача, заказ {invoice_id}: внутренняя ошибка, выдайте вручную.\n"
@@ -459,3 +466,127 @@ def _send_chat(invoice_id, text):
         fn(invoice_id, text)
     except Exception as e:
         _notify(f"⚠️ Заказ {invoice_id}: не смог написать покупателю в чат GGSel: {_hide(e)[:200]}")
+
+
+# ---------------------------------------------------------------- Telegram Stars
+
+def parse_username(text):
+    """'@user', 'user', 't.me/user', 'https://t.me/user' -> '@user'. None, если не похоже на username."""
+    if not text:
+        return None
+    t = text.strip()
+    m = re.search(r"(?:t\.me/|telegram\.me/)([A-Za-z0-9_]{4,32})", t)
+    if m:
+        name = m.group(1)
+    else:
+        m = re.search(r"@?([A-Za-z][A-Za-z0-9_]{3,31})", t)
+        if not m:
+            return None
+        name = m.group(1)
+    return "@" + name
+
+
+def parse_stars_amount(text):
+    """'500 звёзд (+700 RUB)' -> 500"""
+    if not text:
+        return None
+    m = re.search(r"\d[\d\s]*", text)
+    return int(re.sub(r"\s", "", m.group(0))) if m else None
+
+
+def _deliver_stars(invoice_id, product, info, resume=None):
+    title = product.get("title", "Telegram Stars")
+    if resume:
+        username = resume["player_id"]
+        amount = resume["amount"]
+    else:
+        options = _options(info or {})
+        username = parse_username(_find_option(options, product["username_option"]))
+        src = product.get("amount_option")
+        if src == "quantity":
+            amount = parse_stars_amount(str((info or {}).get("cnt_goods") or ""))
+        else:
+            amount = parse_stars_amount(_find_option(options, src))
+        amount = (amount or 0) * int(product.get("multiplier", 1)) or None
+        if not amount or not username:
+            _set_status(invoice_id, status="manual", error="не разобраны опции")
+            _notify(f"❗ Автовыдача, заказ {invoice_id} ({title}): не смог прочитать опции заказа, "
+                    f"выдайте вручную.\nОпции: {options or (info or {}).get('options')}\n"
+                    f"Количество: {(info or {}).get('cnt_goods')}")
+            return
+        _set_status(invoice_id, status="new", player_id=username, amount=amount, plan=[amount])
+
+    # проверка получателя
+    try:
+        epinby_post("/telegram-stars/recipient", {"telegram_username": username})
+    except EpinbyError as e:
+        if e.code in ("VALIDATION_ERROR", "RECIPIENT_NOT_FOUND", "NOT_FOUND"):
+            _set_status(invoice_id, status="manual", error="неверный username")
+            if not DRY_RUN:
+                _send_chat(invoice_id, MSG_BAD_USERNAME.format(username=username))
+            _notify(f"⚠️ Заказ {invoice_id}: EpinBy не нашёл Telegram {username}. "
+                    f"Покупатель{' (тест: не уведомлён)' if DRY_RUN else ''} попрошен проверить username.\n"
+                    f"Ответ: {e.message}")
+            return
+        print(f"Заказ {invoice_id}: проверка получателя не удалась ({e.code}), продолжаю")
+
+    try:
+        quote = epinby_post("/telegram-stars/quote", {"stars_amount": amount})
+        price = quote.get("reseller_price_usd")
+    except EpinbyError as e:
+        _set_status(invoice_id, status="manual", error=f"{e.code} {e.message}")
+        _notify(f"❗ Заказ {invoice_id}: {amount} ⭐ для {username} — EpinBy не дал цену: "
+                f"{e.code} {e.message}. Выдайте вручную." + _balance_line())
+        return
+
+    if DRY_RUN:
+        _set_status(invoice_id, status="dry_run")
+        _notify(f"🧪 Тест. Заказ {invoice_id}: {amount} ⭐ → {username}.\n"
+                f"Стоимость: ${price}. Ничего не куплено (DRY_RUN=1)." + _balance_line())
+        return
+
+    _set_status(invoice_id, status="in_progress")
+    body = {"telegram_username": username, "stars_amount": amount}
+    order, err = None, None
+    for attempt in range(3):
+        try:
+            order = epinby_post("/telegram-stars/order", body, idem_key=f"ggsel-{invoice_id}-stars")
+            break
+        except EpinbyError as e:
+            if e.code == "INSUFFICIENT_FUNDS":
+                _notify("💸 На балансе EpinBy не хватает денег! Пополните баланс.")
+            err = f"{e.code} {e.message}"
+            break
+        except Exception as e:
+            err = f"сеть: {_hide(e)[:150]}"
+            time.sleep(5)
+
+    status = None
+    if order:
+        status = _wait_stars(order.get("order_id"), order.get("status"))
+        if status == "COMPLETED":
+            _set_status(invoice_id, status="done")
+            _send_chat(invoice_id, MSG_DONE)
+            _notify(f"✅ Заказ {invoice_id} выдан автоматически: {amount} ⭐ → {username} (${price})."
+                    + _balance_line())
+            return
+        err = f"EpinBy #{order.get('order_id')}: статус {status}"
+
+    _set_status(invoice_id, status="manual", error=err)
+    _send_chat(invoice_id, MSG_MANUAL)
+    _notify(f"❗ Заказ {invoice_id}: {amount} ⭐ для {username} не выдано.\nПричина: {err}\n"
+            f"Проверьте в EpinBy и доделайте вручную." + _balance_line())
+
+
+def _wait_stars(order_id, status):
+    deadline = time.time() + POLL_TIMEOUT
+    status = (status or "").upper()
+    while status not in ("COMPLETED", "CANCELED", "FAILED"):
+        if time.time() > deadline:
+            return "TIMEOUT"
+        time.sleep(POLL_EVERY)
+        try:
+            status = (epinby_get(f"/telegram-stars/order/{order_id}").get("status") or "").upper()
+        except Exception as e:
+            print(f"EpinBy Stars #{order_id}: статус не получен:", _hide(e)[:150])
+    return status

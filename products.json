@@ -17,6 +17,12 @@
       "kind": "pubg_uc",
       "amount_option": "UC",
       "id_option": "ID"
+    },
+    "103188119": {
+      "title": "Telegram Stars",
+      "kind": "tg_stars",
+      "amount_option": "quantity",
+      "username_option": "username"
     }
   }
 }

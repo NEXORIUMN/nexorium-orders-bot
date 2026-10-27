@@ -7,6 +7,12 @@
     GGSEL_API_KEY    - API-ключ GGSel
     TG_TOKEN         - токен бота от BotFather
     TG_CHAT_ID       - ID группы (с минусом)
+
+Автовыдача (см. autodelivery.py и products.json):
+    AUTODELIVERY     - on / off
+    EPINBY_API_KEY   - X-API-Key из бота EpinBy
+    DRY_RUN          - 1 = тест без покупок (по умолчанию), 0 = боевой режим
+    STATE_DIR        - папка Volume на Railway, чтобы состояние не терялось при перезапуске
 """
 
 import functools
@@ -18,6 +24,8 @@ import sys
 import time
 
 import requests
+
+import autodelivery
 
 print = functools.partial(print, flush=True)  # чтобы логи появлялись сразу
 
@@ -32,7 +40,7 @@ BACKOFF_START = 60
 BACKOFF_MAX = 15 * 60
 TOP = int(os.getenv("TOP", "20"))                   # сколько последних продаж брать
 API_BASE = "https://seller.ggsel.com/api_sellers/api"
-STATE_FILE = os.getenv("STATE_FILE", "seen_orders.json")
+STATE_FILE = os.getenv("STATE_FILE") or os.path.join(os.getenv("STATE_DIR", "."), "seen_orders.json")
 TOKEN_LIFETIME = 60 * 60
 
 _token = None
@@ -42,7 +50,7 @@ _token_time = 0.0
 def hide(text):
     """Убирает токен и ключ из текста ошибок."""
     text = str(text)
-    for secret in (TG_TOKEN, API_KEY):
+    for secret in (TG_TOKEN, API_KEY, autodelivery.EPINBY_KEY):
         if secret:
             text = text.replace(secret, "***")
     return text
@@ -121,9 +129,27 @@ def money(value, currency):
     return f"{value} {sign}".strip()
 
 
-def format_sale(sale):
+def send_chat(invoice_id, text):
+    """Сообщение покупателю в чат заказа GGSel."""
+    r = requests.post(
+        f"{API_BASE}/debates/v2",
+        params={"token": get_token(), "id_i": invoice_id},
+        json={"message": text},
+        headers={"Accept": "application/json"},
+        timeout=20,
+    )
+    if not r.ok:
+        raise RuntimeError(f"GGSel не принял сообщение, код {r.status_code}: {r.text[:200]}")
+
+
+def sale_product_id(sale):
     product = sale.get("product") or {}
-    info = get_order_info(sale_id(sale)) or {}
+    return str(product.get("id") or sale.get("product_id") or sale.get("id_goods") or "")
+
+
+def format_sale(sale, info):
+    product = sale.get("product") or {}
+    info = info or {}
     # название берём из списка продаж: в подробностях заказа вместо него бывает код
     name = product.get("name") or sale.get("name") or info.get("name") or "Товар"
     lines = ["🛒 <b>Новый заказ на GGSel</b>", f"Товар: {html.escape(str(name))}"]
@@ -222,6 +248,8 @@ def main():
     if notify("✅ Бот заказов GGSel запущен, связь с GGSel есть. Жду новые заказы."):
         print("Telegram: сообщение о запуске отправлено.")
 
+    autodelivery.setup(notify=notify, send_chat=send_chat, hide=hide)
+
     seen = load_seen()
     if seen is None:
         seen = [sale_id(s) for s in sales if sale_id(s)]
@@ -238,10 +266,15 @@ def main():
             errors, delay = 0, BACKOFF_START
             new = [s for s in sales if sale_id(s) and sale_id(s) not in seen]
             for sale in reversed(new):
-                send_telegram(format_sale(sale))
+                info = get_order_info(sale_id(sale))
+                send_telegram(format_sale(sale, info))
                 seen.append(sale_id(sale))
                 save_seen(seen)
                 print("Отправлен заказ", sale_id(sale))
+                if info is not None:
+                    pid = sale_product_id(sale) or str(info.get("item_id") or info.get("id_goods") or "")
+                    if autodelivery.start(sale, info, sale_id(sale), pid):
+                        print("Автовыдача: заказ", sale_id(sale), "взят в работу")
             time.sleep(CHECK_EVERY)
         except Exception as e:
             errors += 1

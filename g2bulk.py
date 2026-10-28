@@ -162,6 +162,7 @@ def _norm(s):
 def denominations(game, unit):
     """
     Пакеты из каталога, название которых имеет вид "<число> <unit>", например "60 UC".
+    unit = "" — пакеты, названные просто числом ("51", "105" у Blood Strike).
     -> {количество: (название в каталоге, цена $)}. Пакеты с другими словами
     (пропуски, наборы, акции) не берутся, чтобы не выдать не то.
     """
@@ -172,8 +173,9 @@ def denominations(game, unit):
         m = re.match(r"^\s*(\d[\d,\s]*)\s*(.*?)\s*$", name)
         if not m:
             continue
-        rest = _norm(m.group(2))
-        if want and rest != want:
+        # "(15% more value)" и подобные пометки не мешают: "290 Coins (15% more value)" -> coins
+        rest = _norm(re.sub(r"\(.*?\)", " ", m.group(2)))
+        if rest != want:
             continue
         qty = int(re.sub(r"[,\s]", "", m.group(1)))
         price = item.get("amount")

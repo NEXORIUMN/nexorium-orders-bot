@@ -685,6 +685,12 @@ def _g2_startup_report():
             continue
         sizes = ", ".join(str(q) for q in sorted(packs))
         lines.append(f"• {title}: пакеты {sizes}")
+        if p.get("prefer"):
+            names = {str(i.get("name")) for i in g2bulk.catalogue(p["game"])}
+            bad = [v for v in p["prefer"].values() if v not in names]
+            ok_n = len(p["prefer"]) - len(bad)
+            lines.append(f"  сначала бонусные пакеты: {ok_n} из {len(p['prefer'])}"
+                         + (f"; нет в каталоге: {', '.join(bad)}" if bad else ""))
         for amount in p.get("check_amounts") or []:
             if not g2bulk.split(int(amount), {q: v[1] for q, v in packs.items()}):
                 lines.append(f"  ❗ {amount} нельзя собрать из этих пакетов")
@@ -742,7 +748,9 @@ def _deliver_g2bulk(invoice_id, product, info, resume=None):
             _notify(f"❗ Заказ {invoice_id} ({title}): {amount} {unit} нельзя собрать из пакетов G2Bulk, "
                     f"выдайте вручную. ID: {player_id}")
             return
-        plan = [packs[q][0] for q in sizes]
+        prefer = product.get("prefer") or {}
+        plan = [[prefer[packs[q][0]], packs[q][0]] if packs[q][0] in prefer else packs[q][0]
+                for q in sizes]
         _set_status(invoice_id, status="new", player_id=player_id, server_id=server_id,
                     amount=amount, plan=plan, supplier="g2bulk")
     _g2_execute(invoice_id, product, player_id, server_id, amount, plan)
@@ -765,7 +773,7 @@ def _g2_execute(invoice_id, product, player_id, server_id, amount, plan):
     title = product.get("title", "")
     game = product["game"]
     unit = "" if product.get("variants") else product.get("unit", "")
-    plan_text = " + ".join(plan)
+    plan_text = " + ".join(_alts(n)[0] for n in plan)
     who = f"{player_id}" + (f" / сервер {server_id}" if server_id else "")
 
     valid, nickname = g2bulk.check_player(game, player_id, server_id)
@@ -784,7 +792,7 @@ def _g2_execute(invoice_id, product, player_id, server_id, amount, plan):
     if G2_DRY_RUN:
         try:
             prices = {str(i.get("name")): float(i.get("amount") or 0) for i in g2bulk.catalogue(game)}
-            est = f" (≈ ${sum(prices.get(n, 0) for n in plan):.2f})"
+            est = f" (≈ ${sum(prices.get(_alts(n)[0], 0) for n in plan):.2f})"
         except Exception:
             est = ""
         _set_status(invoice_id, status="dry_run")
@@ -795,29 +803,54 @@ def _g2_execute(invoice_id, product, player_id, server_id, amount, plan):
 
     _set_status(invoice_id, status="in_progress")
     done = []
-    for idx, name in enumerate(plan):
-        ok, err = _g2_buy_part(invoice_id, idx, game, name, player_id, server_id)
+    for idx, names in enumerate(plan):
+        ok, got, err = _g2_buy_part(invoice_id, idx, game, _alts(names), player_id, server_id)
         if ok:
-            done.append(name)
+            done.append(got)
             continue
         _set_status(invoice_id, status="manual", error=err, done=done)
         _send_chat(invoice_id, MSG_MANUAL)
         _notify(f"❗ Заказ {invoice_id} ({title}): выдача через G2Bulk остановилась.\n"
                 f"Игрок: {who}\nВыдано: {' + '.join(done) or 'ничего'}\n"
-                f"Не выдано: {' + '.join(plan[idx:])}\nПричина: {err}\n"
+                f"Не выдано: {' + '.join(_alts(n)[-1] for n in plan[idx:])}\nПричина: {err}\n"
                 f"Доделайте вручную." + _g2_balance_line())
         return
 
     _set_status(invoice_id, status="done", done=done)
     _send_chat(invoice_id, MSG_DONE)
-    _notify(f"✅ Заказ {invoice_id} выдан автоматически (G2Bulk): {amount} {unit} ({plan_text}) → {who}."
+    _notify(f"✅ Заказ {invoice_id} выдан автоматически (G2Bulk): {amount} {unit} ({' + '.join(done)}) → {who}."
             + _g2_balance_line())
 
 
-def _g2_buy_part(invoice_id, idx, game, name, player_id, server_id):
-    """Покупает одну часть заказа. Повторный вызов после перезапуска не покупает второй раз."""
-    remark = f"ggsel-{invoice_id}-{idx}"
+def _alts(entry):
+    """Часть плана: одно название или список [предпочтительный, запасной, ...]."""
+    return [entry] if isinstance(entry, str) else list(entry)
+
+
+def _g2_buy_part(invoice_id, idx, game, names, player_id, server_id):
+    """
+    Покупает одну часть заказа, по очереди пробуя варианты (например, сначала WEB BONUS,
+    потом обычный пакет). К следующему варианту переходит, только если предыдущий точно
+    не выдан: G2Bulk отказал сразу или заказ FAILED (деньги вернулись).
+    -> (успех, что выдано, ошибка)
+    """
+    err = "нет вариантов"
+    for alt, name in enumerate(names):
+        ok, err, can_next = _g2_buy_one(invoice_id, f"{idx}-{alt}", game, name, player_id, server_id)
+        if ok:
+            return True, name, None
+        if not can_next or alt == len(names) - 1:
+            return False, None, err
+        print(f"Заказ {invoice_id}: {err} — пробую запасной вариант {names[alt + 1]}")
+        _notify(f"ℹ️ Заказ {invoice_id}: {name} не прошёл, беру {names[alt + 1]}.")
+    return False, None, err
+
+
+def _g2_buy_one(invoice_id, slot, game, name, player_id, server_id):
+    """Одна покупка. Повтор после перезапуска не покупает второй раз. -> (успех, ошибка, можно_запасной)"""
+    remark = f"ggsel-{invoice_id}-{slot}"
     parts = (_get_record(invoice_id) or {}).get("g2_parts") or {}
+    idx = slot
     part = parts.get(str(idx)) or {}
     order_id = part.get("order_id")
 
@@ -826,16 +859,16 @@ def _g2_buy_part(invoice_id, idx, game, name, player_id, server_id):
         try:
             found = g2bulk.find_order_by_remark(game, remark)
         except Exception as e:
-            return False, f"{name}: не смог проверить историю G2Bulk ({_hide(e)[:120]}), проверьте вручную"
+            return False, f"{name}: не смог проверить историю G2Bulk ({_hide(e)[:120]}), проверьте вручную", False
         if found:
             order_id = found.get("order_id")
         elif time.time() - part.get("ts", 0) > 25 * 60:
-            return False, f"{name}: покупка прервалась, проверьте в истории G2Bulk (подпись {remark})"
+            return False, f"{name}: покупка прервалась, проверьте в истории G2Bulk (подпись {remark})", False
 
     if not order_id:
         parts[str(idx)] = {"attempted": True, "ts": part.get("ts") or time.time()}
         _set_status(invoice_id, g2_parts=parts)
-        key = g2bulk.idem_key("ggsel", invoice_id, idx)
+        key = g2bulk.idem_key("ggsel", invoice_id, slot)
         order, err = None, None
         for attempt in range(3):
             try:
@@ -844,16 +877,16 @@ def _g2_buy_part(invoice_id, idx, game, name, player_id, server_id):
             except g2bulk.G2Error as e:
                 if e.no_money:
                     _notify("💸 На балансе G2Bulk не хватает денег! Пополните баланс.")
-                    return False, "мало денег на балансе G2Bulk"
+                    return False, "мало денег на балансе G2Bulk", False
                 err = f"{name}: {_hide(e.message)[:200]}"
                 if not e.network:
                     # G2Bulk отказал - заказ точно не создан
                     parts[str(idx)] = {}
                     _set_status(invoice_id, g2_parts=parts)
-                    return False, err
+                    return False, err, True
                 time.sleep(5)   # повтор с тем же ключом - дубля не будет
         if not order:
-            return False, (err or f"{name}: нет ответа") + " (проверьте в истории G2Bulk)"
+            return False, (err or f"{name}: нет ответа") + " (проверьте в истории G2Bulk)", False
         order_id = order.get("order_id")
         parts[str(idx)] = {"attempted": True, "ts": parts[str(idx)]["ts"], "order_id": order_id}
         _set_status(invoice_id, g2_parts=parts)
@@ -861,10 +894,10 @@ def _g2_buy_part(invoice_id, idx, game, name, player_id, server_id):
     status = _g2_wait(order_id)
     if status == "COMPLETED":
         print(f"Заказ {invoice_id}: {name} выдано (G2Bulk #{order_id})")
-        return True, None
+        return True, None, False
     if status == "TIMEOUT":
-        return False, f"{name} (G2Bulk #{order_id}): долго выполняется, проверьте в G2Bulk"
-    return False, f"{name} (G2Bulk #{order_id}): статус {status}, деньги вернулись на баланс G2Bulk"
+        return False, f"{name} (G2Bulk #{order_id}): долго выполняется, проверьте в G2Bulk", False
+    return False, f"{name} (G2Bulk #{order_id}): статус {status}, деньги вернулись на баланс G2Bulk", True
 
 
 def _g2_wait(order_id):

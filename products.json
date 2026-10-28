@@ -12,6 +12,17 @@
   },
 
   "ggsel_products": {
+    "_example_g2bulk": {
+      "_comment": "Образец товара через G2Bulk. Ключ - ID товара на GGSel. game - код игры в G2Bulk (pubgm, mlbb ...), unit - что идёт после числа в названии пакета в каталоге G2Bulk (UC, Diamonds ...). server_option - только если игра просит сервер.",
+      "title": "Mobile Legends алмазы",
+      "kind": "g2bulk",
+      "game": "mlbb",
+      "unit": "Diamonds",
+      "amount_option": "Алмаз",
+      "id_option": "ID",
+      "server_option": "Сервер",
+      "check_amounts": [86, 172, 257]
+    },
     "102610137": {
       "title": "PUBG Mobile UC по ID (Global)",
       "kind": "pubg_uc",

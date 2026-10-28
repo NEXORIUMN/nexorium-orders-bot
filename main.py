@@ -11,6 +11,8 @@
 Автовыдача (см. autodelivery.py и products.json):
     AUTODELIVERY     - on / off
     EPINBY_API_KEY   - X-API-Key из бота EpinBy
+    G2BULK_API_KEY   - X-API-Key из кабинета g2bulk.com (второй поставщик)
+    G2BULK_DRY_RUN   - 1 = товары G2Bulk в тесте (по умолчанию), 0 = боевой режим
     DRY_RUN          - 1 = тест без покупок (по умолчанию), 0 = боевой режим
     STATE_DIR        - папка Volume на Railway, чтобы состояние не терялось при перезапуске
 """
@@ -50,7 +52,7 @@ _token_time = 0.0
 def hide(text):
     """Убирает токен и ключ из текста ошибок."""
     text = str(text)
-    for secret in (TG_TOKEN, API_KEY, autodelivery.EPINBY_KEY):
+    for secret in (TG_TOKEN, API_KEY, autodelivery.EPINBY_KEY, autodelivery.g2bulk.KEY):
         if secret:
             text = text.replace(secret, "***")
     return text

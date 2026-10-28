@@ -620,17 +620,46 @@ MSG_BAD_ID_SERVER = (
 )
 
 
+def _clean(text):
+    """'🔥ПРЕМИУМ 30 ДНЕЙ🔥 (+0.0 RUB)' -> 'премиум 30 дней'. Без смайлов, цены и регистра."""
+    text = str(text or "").split("(")[0]
+    text = re.sub(r"[^\w\s+]", " ", text)
+    return re.sub(r"\s+", " ", text).strip().lower()
+
+
 def _parse_number(text):
-    """'86 алмазов (+150 RUB)' -> 86. Число берётся до скобки с ценой."""
+    """'86 алмазов (+150 RUB)' -> 86, '50+1 ЗОЛОТА' -> 51. Число берётся до скобки с ценой."""
     if not text:
         return None
-    m = re.search(r"\d[\d\s]*", str(text).split("(")[0])
-    return int(re.sub(r"\s", "", m.group(0))) if m else None
+    m = re.search(r"\d+(?:\s*\+\s*\d+)*", str(text).split("(")[0])
+    return sum(int(x) for x in re.findall(r"\d+", m.group(0))) if m else None
+
+
+def _parse_g2_id(product, text):
+    if product.get("id_format") == "raw":
+        # ID с буквами и дефисами, например Oxide: 0F-FJW-3N
+        value = re.sub(r"\s", "", str(text or "")).strip(".,;:")
+        return value.upper() or None
+    return parse_player_id(text)
+
+
+NO_WORDS = ("нет", "не нужен", "не нужно", "без", "no", "none")
 
 
 def _g2_packs(product):
     """{количество: (название в каталоге, цена)} для товара."""
     return g2bulk.denominations(product["game"], product.get("unit", ""))
+
+
+def _catalogue_index(game):
+    """{очищенное название: название в каталоге}."""
+    return {_clean(i.get("name")): str(i.get("name")) for i in g2bulk.catalogue(game)}
+
+
+def _flat_names(parts):
+    for part in parts:
+        for n in _alts(part):
+            yield n
 
 
 def _g2_balance_line():
@@ -646,7 +675,7 @@ def _g2_balance_line():
 
 
 def _g2_startup_report():
-    """Проверяет товары G2Bulk при запуске: есть ли игра и какие пакеты нашлись."""
+    """Проверяет товары G2Bulk при запуске: есть ли игра, нужные поля и пакеты."""
     items = [(k, v) for k, v in _config.get("ggsel_products", {}).items()
              if not k.startswith("_") and v.get("kind") == "g2bulk"]
     if not items:
@@ -661,118 +690,155 @@ def _g2_startup_report():
         lines.append(f"⚠️ Ключ не принят или G2Bulk недоступен: {_hide(e)[:150]}")
     for gid, p in items:
         title = p.get("title", gid)
-        if p.get("variants"):
-            try:
-                names = {str(i.get("name")) for i in g2bulk.catalogue(p["game"])}
-            except Exception as e:
-                lines.append(f"❗ {title}: каталог «{p.get('game')}» не получен: {_hide(e)[:120]}")
-                continue
-            missing = sorted({n for v in p["variants"].values()
-                              for n in ([v] if isinstance(v, str) else v) if n not in names})
-            if missing:
-                lines.append(f"❗ {title}: в каталоге G2Bulk нет: {', '.join(missing)}")
-            else:
-                lines.append(f"• {title}: вариантов {len(p['variants'])}, все найдены")
-            continue
         try:
-            packs = _g2_packs(p)
+            names = set(_catalogue_index(p["game"]).values())
         except Exception as e:
             lines.append(f"❗ {title}: каталог «{p.get('game')}» не получен: {_hide(e)[:120]}")
             continue
-        if not packs:
-            lines.append(f"❗ {title}: в каталоге «{p.get('game')}» нет пакетов вида "
-                         f"«число {p.get('unit', '')}». Выдача будет ручной.")
-            continue
-        sizes = ", ".join(str(q) for q in sorted(packs))
-        lines.append(f"• {title}: пакеты {sizes}")
-        if p.get("prefer"):
-            names = {str(i.get("name")) for i in g2bulk.catalogue(p["game"])}
-            bad = [v for v in p["prefer"].values() if v not in names]
-            ok_n = len(p["prefer"]) - len(bad)
-            lines.append(f"  сначала бонусные пакеты: {ok_n} из {len(p['prefer'])}"
-                         + (f"; нет в каталоге: {', '.join(bad)}" if bad else ""))
-        for amount in p.get("check_amounts") or []:
-            if not g2bulk.split(int(amount), {q: v[1] for q, v in packs.items()}):
-                lines.append(f"  ❗ {amount} нельзя собрать из этих пакетов")
+        try:
+            need = g2bulk.fields(p["game"])
+            if "serverid" in need and not p.get("server_option"):
+                lines.append(f"❗ {title}: G2Bulk просит сервер, а в товаре нет поля сервера")
+        except Exception:
+            pass
+        if p.get("mode") == "catalogue":
+            text = f"• {title}: товар по названию из каталога ({len(names)} позиций)"
+            if p.get("variants"):
+                missing = sorted({n for v in p["variants"].values()
+                                  for n in _flat_names([v] if isinstance(v, str) else v)
+                                  if n not in names})
+                text += f"; ❗ нет в каталоге: {', '.join(missing)}" if missing else ""
+            lines.append(text)
+        else:
+            packs = _g2_packs(p)
+            if not packs:
+                lines.append(f"❗ {title}: в каталоге нет пакетов вида «число {p.get('unit', '')}». "
+                             f"Выдача будет ручной.")
+                continue
+            lines.append(f"• {title}: пакеты {', '.join(str(q) for q in sorted(packs))}")
+            alt = {**(p.get("prefer") or {}), **(p.get("fallback") or {})}
+            bad = [v for v in alt.values() if v not in names]
+            if alt:
+                lines.append(f"  запасные/бонусные пакеты: {len(alt) - len(bad)} из {len(alt)}"
+                             + (f"; ❗ нет в каталоге: {', '.join(bad)}" if bad else ""))
+            for amount in p.get("check_amounts") or []:
+                if not g2bulk.split(int(amount), {q: v[1] for q, v in packs.items()}):
+                    lines.append(f"  ❗ {amount} нельзя собрать из этих пакетов")
+        if p.get("extra_option"):
+            lines.append(f"  + доп. товар из поля «{p['extra_option']}»")
     return "\n".join(lines)
+
+
+class _Manual(Exception):
+    """Заказ нельзя выдать автоматически: причина уходит в группу."""
+
+
+def _g2_plan_amount(product, chosen, info):
+    """Режим «количество»: монеты/золото раскладываются на пакеты. -> (план, описание)"""
+    if product.get("item_option") == "quantity":
+        amount = _parse_number(str((info or {}).get("cnt_goods") or ""))
+    else:
+        amount = _parse_number(chosen)
+    if not amount:
+        raise _Manual(f"не понял количество в «{chosen}»")
+    amount *= int(product.get("multiplier", 1))
+    try:
+        packs = _g2_packs(product)
+    except Exception as e:
+        raise _Manual(f"каталог G2Bulk не получен: {_hide(e)[:150]}")
+    sizes = g2bulk.split(amount, {q: v[1] for q, v in packs.items()})
+    if not sizes:
+        raise _Manual(f"{amount} нельзя собрать из пакетов G2Bulk")
+    prefer = product.get("prefer") or {}       # сначала другой пакет, потом этот
+    fallback = product.get("fallback") or {}   # сначала этот, потом запасной
+    plan = []
+    for q in sizes:
+        name = packs[q][0]
+        if name in prefer:
+            plan.append([prefer[name], name])
+        elif name in fallback:
+            plan.append([name, fallback[name]])
+        else:
+            plan.append(name)
+    return plan, f"{amount} {product.get('unit_title') or product.get('unit', '')}".strip()
+
+
+def _g2_plan_named(product, chosen):
+    """Режим «по названию»: выбранный вариант = товар каталога. -> (план, описание)"""
+    text = _clean(chosen)
+    variants = product.get("variants") or {}
+    best = None
+    for key, parts in variants.items():
+        k = _clean(key)
+        if k and k in text and (best is None or len(k) > len(best[0])):
+            best = (k, [parts] if isinstance(parts, str) else list(parts))
+    if best:
+        return best[1], text
+    try:
+        index = _catalogue_index(product["game"])
+    except Exception as e:
+        raise _Manual(f"каталог G2Bulk не получен: {_hide(e)[:150]}")
+    if text in index:
+        return [index[text]], text
+    raise _Manual(f"вариант «{chosen.strip()}» не найден в каталоге G2Bulk")
+
+
+def _g2_extra(product, options):
+    """Доп. товар из отдельного поля (например, «Нужен пропуск?»). -> список частей плана"""
+    if not product.get("extra_option"):
+        return []
+    chosen = _find_option(options, product["extra_option"])
+    text = _clean(chosen)
+    if not text or any(text == w or text.startswith(w + " ") for w in NO_WORDS):
+        return []
+    try:
+        index = _catalogue_index(product["game"])
+    except Exception as e:
+        raise _Manual(f"каталог G2Bulk не получен: {_hide(e)[:150]}")
+    if text in index:
+        return [index[text]]
+    raise _Manual(f"доп. товар «{chosen.strip()}» не найден в каталоге G2Bulk")
 
 
 def _deliver_g2bulk(invoice_id, product, info, resume=None):
     title = product.get("title", "")
-    game = product["game"]
-    unit = product.get("unit", "")
     if resume:
-        player_id = resume["player_id"]
-        server_id = resume.get("server_id")
-        amount = resume.get("amount")
-        plan = resume["plan"]          # список названий из каталога
-    else:
-        options = _options(info or {})
-        variant_plan = None
-        if product.get("variants"):
-            chosen = _find_option(options, product["amount_option"]) or ""
-            variant_plan, amount = _match_variant(product["variants"], chosen)
-            if variant_plan is None:
-                amount = None
-        elif product.get("amount_option") == "quantity":
-            amount = _parse_number(str((info or {}).get("cnt_goods") or ""))
+        _g2_execute(invoice_id, product, resume["player_id"], resume.get("server_id"),
+                    resume.get("amount"), resume["plan"])
+        return
+    options = _options(info or {})
+    item_key = product.get("item_option") or product.get("amount_option")
+    chosen = _find_option(options, item_key) if item_key != "quantity" else ""
+    player_id = _parse_g2_id(product, _find_option(options, product["id_option"]))
+    server_id = None
+    if product.get("server_option"):
+        server_id = parse_player_id(_find_option(options, product["server_option"]))
+    try:
+        if not player_id or (product.get("server_option") and not server_id):
+            raise _Manual("не нашёл ID игрока" + (" или сервер" if product.get("server_option") else ""))
+        if item_key != "quantity" and not chosen:
+            raise _Manual("не нашёл выбранный товар")
+        if product.get("mode") == "catalogue":
+            plan, what = _g2_plan_named(product, chosen)
         else:
-            amount = _parse_number(_find_option(options, product["amount_option"]))
-        if amount and not variant_plan:
-            amount *= int(product.get("multiplier", 1))
-        player_id = parse_player_id(_find_option(options, product["id_option"]))
-        server_id = None
-        if product.get("server_option"):
-            server_id = parse_player_id(_find_option(options, product["server_option"]))
-        if not amount or not player_id or (product.get("server_option") and not server_id):
-            _set_status(invoice_id, status="manual", error="не разобраны опции")
-            _notify(f"❗ Автовыдача, заказ {invoice_id} ({title}): не смог прочитать опции заказа, "
-                    f"выдайте вручную.\nОпции: {options or (info or {}).get('options')}")
-            return
-        if variant_plan:
-            _set_status(invoice_id, status="new", player_id=player_id, server_id=server_id,
-                        amount=amount, plan=variant_plan, supplier="g2bulk")
-            return _g2_execute(invoice_id, product, player_id, server_id, amount, variant_plan)
-        try:
-            packs = _g2_packs(product)
-        except Exception as e:
-            _set_status(invoice_id, status="manual", error="каталог G2Bulk недоступен")
-            if not G2_DRY_RUN:
-                _send_chat(invoice_id, MSG_MANUAL)
-            _notify(f"❗ Заказ {invoice_id} ({title}): каталог G2Bulk не получен, выдайте вручную.\n"
-                    f"{_hide(e)[:200]}")
-            return
-        sizes = g2bulk.split(amount, {q: v[1] for q, v in packs.items()})
-        if not sizes:
-            _set_status(invoice_id, status="manual", error=f"нельзя собрать {amount}")
-            _notify(f"❗ Заказ {invoice_id} ({title}): {amount} {unit} нельзя собрать из пакетов G2Bulk, "
-                    f"выдайте вручную. ID: {player_id}")
-            return
-        prefer = product.get("prefer") or {}
-        plan = [[prefer[packs[q][0]], packs[q][0]] if packs[q][0] in prefer else packs[q][0]
-                for q in sizes]
-        _set_status(invoice_id, status="new", player_id=player_id, server_id=server_id,
-                    amount=amount, plan=plan, supplier="g2bulk")
-    _g2_execute(invoice_id, product, player_id, server_id, amount, plan)
-
-
-def _match_variant(variants, chosen):
-    """Вариант из опции GGSel -> (список названий в каталоге G2Bulk, подпись). Самое длинное совпадение."""
-    text = re.sub(r"\s+", " ", chosen.split("(")[0]).strip().lower()
-    best = None
-    for key, names in variants.items():
-        k = re.sub(r"\s+", " ", key).strip().lower()
-        if k and k in text and (best is None or len(k) > len(best[0])):
-            best = (k, [names] if isinstance(names, str) else list(names), key)
-    if not best:
-        return None, None
-    return best[1], best[2]
+            plan, what = _g2_plan_amount(product, chosen, info)
+        extra = _g2_extra(product, options)
+        if extra:
+            plan += extra
+            what += " + " + " + ".join(extra)
+    except _Manual as e:
+        _set_status(invoice_id, status="manual", error=str(e))
+        _notify(f"❗ Автовыдача, заказ {invoice_id} ({title}): {e}. Выдайте вручную.\n"
+                f"Опции: {options or (info or {}).get('options')}")
+        return
+    _set_status(invoice_id, status="new", player_id=player_id, server_id=server_id,
+                amount=what, plan=plan, supplier="g2bulk")
+    _g2_execute(invoice_id, product, player_id, server_id, what, plan)
 
 
 def _g2_execute(invoice_id, product, player_id, server_id, amount, plan):
     title = product.get("title", "")
     game = product["game"]
-    unit = "" if product.get("variants") else product.get("unit", "")
     plan_text = " + ".join(_alts(n)[0] for n in plan)
     who = f"{player_id}" + (f" / сервер {server_id}" if server_id else "")
 
@@ -796,7 +862,7 @@ def _g2_execute(invoice_id, product, player_id, server_id, amount, plan):
         except Exception:
             est = ""
         _set_status(invoice_id, status="dry_run")
-        _notify(f"🧪 Тест G2Bulk. Заказ {invoice_id}: {amount} {unit} → {who}.\n"
+        _notify(f"🧪 Тест G2Bulk. Заказ {invoice_id}: {amount} → {who}.\n"
                 f"Купил бы: {plan_text}{est}.\nНичего не куплено (G2BULK_DRY_RUN=1)."
                 + _g2_balance_line())
         return
@@ -818,7 +884,7 @@ def _g2_execute(invoice_id, product, player_id, server_id, amount, plan):
 
     _set_status(invoice_id, status="done", done=done)
     _send_chat(invoice_id, MSG_DONE)
-    _notify(f"✅ Заказ {invoice_id} выдан автоматически (G2Bulk): {amount} {unit} ({' + '.join(done)}) → {who}."
+    _notify(f"✅ Заказ {invoice_id} выдан автоматически (G2Bulk): {amount} ({' + '.join(done)}) → {who}."
             + _g2_balance_line())
 
 

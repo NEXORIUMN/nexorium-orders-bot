@@ -170,14 +170,15 @@ def denominations(game, unit):
     want = _norm(unit)
     for item in catalogue(game):
         name = str(item.get("name") or "")
-        m = re.match(r"^\s*(\d[\d,\s]*)\s*(.*?)\s*$", name)
+        # "60 UC", "51", "290 Coins (15% more value)", "50 + 5 WEB BONUS" (= 55)
+        m = re.match(r"^\s*(\d[\d,]*(?:\s*\+\s*\d[\d,]*)*)\s*(.*?)\s*$", name)
         if not m:
             continue
         # "(15% more value)" и подобные пометки не мешают: "290 Coins (15% more value)" -> coins
         rest = _norm(re.sub(r"\(.*?\)", " ", m.group(2)))
         if rest != want:
             continue
-        qty = int(re.sub(r"[,\s]", "", m.group(1)))
+        qty = sum(int(x.replace(",", "")) for x in re.findall(r"\d[\d,]*", m.group(1)))
         price = item.get("amount")
         if qty <= 0 or price is None:
             continue

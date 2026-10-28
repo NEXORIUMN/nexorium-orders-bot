@@ -1,28 +1,52 @@
 {
   "_comment": "Какие товары GGSel выдаются автоматически. Ключ - ID товара на GGSel.",
-
   "uc_packs": {
     "_comment": "Пакеты PUBG UC в EpinBy. ids - товары по порядку: основной, затем запасные. price - для выбора самой дешёвой комбинации.",
-    "60":   {"price": 0.89,  "ids": [3436, 880]},
-    "325":  {"price": 4.37,  "ids": [3437, 877]},
-    "660":  {"price": 8.60,  "ids": [3438, 881]},
-    "1800": {"price": 21.50, "ids": [3439, 117, 874]},
-    "3850": {"price": 41.50, "ids": [3440, 120]},
-    "8100": {"price": 82.50, "ids": [3441, 115]}
-  },
-
-  "ggsel_products": {
-    "_example_g2bulk": {
-      "_comment": "Образец товара через G2Bulk. Ключ - ID товара на GGSel. game - код игры в G2Bulk (pubgm, mlbb ...), unit - что идёт после числа в названии пакета в каталоге G2Bulk (UC, Diamonds ...). server_option - только если игра просит сервер.",
-      "title": "Mobile Legends алмазы",
-      "kind": "g2bulk",
-      "game": "mlbb",
-      "unit": "Diamonds",
-      "amount_option": "Алмаз",
-      "id_option": "ID",
-      "server_option": "Сервер",
-      "check_amounts": [86, 172, 257]
+    "60": {
+      "price": 0.89,
+      "ids": [
+        3436,
+        880
+      ]
     },
+    "325": {
+      "price": 4.37,
+      "ids": [
+        3437,
+        877
+      ]
+    },
+    "660": {
+      "price": 8.6,
+      "ids": [
+        3438,
+        881
+      ]
+    },
+    "1800": {
+      "price": 21.5,
+      "ids": [
+        3439,
+        117,
+        874
+      ]
+    },
+    "3850": {
+      "price": 41.5,
+      "ids": [
+        3440,
+        120
+      ]
+    },
+    "8100": {
+      "price": 82.5,
+      "ids": [
+        3441,
+        115
+      ]
+    }
+  },
+  "ggsel_products": {
     "102610137": {
       "title": "PUBG Mobile UC по ID (Global)",
       "kind": "pubg_uc",
@@ -34,6 +58,77 @@
       "kind": "tg_stars",
       "amount_option": "quantity",
       "username_option": "username"
+    },
+    "_g2bulk_help": {
+      "_comment": "Товары через G2Bulk (kind g2bulk). mode: 'catalogue' - выбранный вариант совпадает с названием товара в каталоге G2Bulk (или задан в variants); без mode - количество раскладывается на пакеты вида '<число> <unit>'. fallback: если первый пакет не прошёл (отказ или FAILED), берётся запасной. extra_option - поле с доп. товаром (например, пропуск). id_format raw - ID с буквами."
+    },
+    "103551352": {
+      "title": "Oxide премиум",
+      "kind": "g2bulk",
+      "game": "oxide",
+      "mode": "catalogue",
+      "item_option": "желаемый товар",
+      "id_option": "твой id",
+      "id_format": "raw",
+      "variants": {
+        "премиум 30 дней": "Premium",
+        "премиум плюс": "Premium Plus"
+      }
+    },
+    "103551150": {
+      "title": "Oxide монеты",
+      "kind": "g2bulk",
+      "game": "oxide",
+      "unit": "WEB BONUS",
+      "unit_title": "монет",
+      "item_option": "желаемый товар",
+      "id_option": "твой id",
+      "id_format": "raw",
+      "fallback": {
+        "50 + 5 WEB BONUS": "50 Coins",
+        "125 + 20 WEB BONUS": "135 Coins",
+        "250 + 65 WEB BONUS": "290 Coins (15% more value)",
+        "500 + 175 WEB BONUS": "630 Coins (25% more value)",
+        "1250 + 500 WEB BONUS": "1675 Coins (30% more value)",
+        "2500 + 1250 WEB BONUS": "3550 Coins (40% more value)"
+      },
+      "check_amounts": [
+        55,
+        145,
+        315,
+        675,
+        1750,
+        3750,
+        11250
+      ]
+    },
+    "103750688": {
+      "title": "Blood Strike пропуска",
+      "kind": "g2bulk",
+      "game": "bloodstrike",
+      "mode": "catalogue",
+      "item_option": "желаемый товар",
+      "id_option": "user id"
+    },
+    "103750437": {
+      "title": "Blood Strike золото",
+      "kind": "g2bulk",
+      "game": "bloodstrike",
+      "unit": "",
+      "unit_title": "золота",
+      "item_option": "желаемый товар",
+      "id_option": "user id",
+      "extra_option": "пропуск",
+      "check_amounts": [
+        51,
+        105,
+        320,
+        540,
+        1100,
+        2260,
+        5800,
+        23200
+      ]
     }
   }
 }

@@ -89,8 +89,7 @@
         "125 + 20 WEB BONUS": "135 Coins",
         "250 + 65 WEB BONUS": "290 Coins (15% more value)",
         "500 + 175 WEB BONUS": "630 Coins (25% more value)",
-        "1250 + 500 WEB BONUS": "1675 Coins (30% more value)",
-        "2500 + 1250 WEB BONUS": "3550 Coins (40% more value)"
+        "1250 + 500 WEB BONUS": "1675 Coins (30% more value)"
       },
       "check_amounts": [
         55,
@@ -100,7 +99,10 @@
         1750,
         3750,
         11250
-      ]
+      ],
+      "no_fallback": {
+        "2500 + 1250 WEB BONUS": "3750 монет через WEB BONUS не прошло. Обычным пакетом не заменяю: номиналы различаются (3550 вместо 3750)."
+      }
     },
     "103750688": {
       "title": "Blood Strike пропуска",

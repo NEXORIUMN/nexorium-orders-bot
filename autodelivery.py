@@ -874,6 +874,9 @@ def _g2_execute(invoice_id, product, player_id, server_id, amount, plan):
         if ok:
             done.append(got)
             continue
+        note = (product.get("no_fallback") or {}).get(_alts(names)[0])
+        if note:
+            err = f"{err}\n{note}"
         _set_status(invoice_id, status="manual", error=err, done=done)
         _send_chat(invoice_id, MSG_MANUAL)
         _notify(f"❗ Заказ {invoice_id} ({title}): выдача через G2Bulk остановилась.\n"

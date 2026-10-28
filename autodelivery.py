@@ -661,6 +661,19 @@ def _g2_startup_report():
         lines.append(f"⚠️ Ключ не принят или G2Bulk недоступен: {_hide(e)[:150]}")
     for gid, p in items:
         title = p.get("title", gid)
+        if p.get("variants"):
+            try:
+                names = {str(i.get("name")) for i in g2bulk.catalogue(p["game"])}
+            except Exception as e:
+                lines.append(f"❗ {title}: каталог «{p.get('game')}» не получен: {_hide(e)[:120]}")
+                continue
+            missing = sorted({n for v in p["variants"].values()
+                              for n in ([v] if isinstance(v, str) else v) if n not in names})
+            if missing:
+                lines.append(f"❗ {title}: в каталоге G2Bulk нет: {', '.join(missing)}")
+            else:
+                lines.append(f"• {title}: вариантов {len(p['variants'])}, все найдены")
+            continue
         try:
             packs = _g2_packs(p)
         except Exception as e:
@@ -689,11 +702,17 @@ def _deliver_g2bulk(invoice_id, product, info, resume=None):
         plan = resume["plan"]          # список названий из каталога
     else:
         options = _options(info or {})
-        if product.get("amount_option") == "quantity":
+        variant_plan = None
+        if product.get("variants"):
+            chosen = _find_option(options, product["amount_option"]) or ""
+            variant_plan, amount = _match_variant(product["variants"], chosen)
+            if variant_plan is None:
+                amount = None
+        elif product.get("amount_option") == "quantity":
             amount = _parse_number(str((info or {}).get("cnt_goods") or ""))
         else:
             amount = _parse_number(_find_option(options, product["amount_option"]))
-        if amount:
+        if amount and not variant_plan:
             amount *= int(product.get("multiplier", 1))
         player_id = parse_player_id(_find_option(options, product["id_option"]))
         server_id = None
@@ -704,6 +723,10 @@ def _deliver_g2bulk(invoice_id, product, info, resume=None):
             _notify(f"❗ Автовыдача, заказ {invoice_id} ({title}): не смог прочитать опции заказа, "
                     f"выдайте вручную.\nОпции: {options or (info or {}).get('options')}")
             return
+        if variant_plan:
+            _set_status(invoice_id, status="new", player_id=player_id, server_id=server_id,
+                        amount=amount, plan=variant_plan, supplier="g2bulk")
+            return _g2_execute(invoice_id, product, player_id, server_id, amount, variant_plan)
         try:
             packs = _g2_packs(product)
         except Exception as e:
@@ -722,7 +745,26 @@ def _deliver_g2bulk(invoice_id, product, info, resume=None):
         plan = [packs[q][0] for q in sizes]
         _set_status(invoice_id, status="new", player_id=player_id, server_id=server_id,
                     amount=amount, plan=plan, supplier="g2bulk")
+    _g2_execute(invoice_id, product, player_id, server_id, amount, plan)
 
+
+def _match_variant(variants, chosen):
+    """Вариант из опции GGSel -> (список названий в каталоге G2Bulk, подпись). Самое длинное совпадение."""
+    text = re.sub(r"\s+", " ", chosen.split("(")[0]).strip().lower()
+    best = None
+    for key, names in variants.items():
+        k = re.sub(r"\s+", " ", key).strip().lower()
+        if k and k in text and (best is None or len(k) > len(best[0])):
+            best = (k, [names] if isinstance(names, str) else list(names), key)
+    if not best:
+        return None, None
+    return best[1], best[2]
+
+
+def _g2_execute(invoice_id, product, player_id, server_id, amount, plan):
+    title = product.get("title", "")
+    game = product["game"]
+    unit = "" if product.get("variants") else product.get("unit", "")
     plan_text = " + ".join(plan)
     who = f"{player_id}" + (f" / сервер {server_id}" if server_id else "")
 
@@ -741,7 +783,7 @@ def _deliver_g2bulk(invoice_id, product, info, resume=None):
 
     if G2_DRY_RUN:
         try:
-            prices = {v[0]: v[1] for v in _g2_packs(product).values()}
+            prices = {str(i.get("name")): float(i.get("amount") or 0) for i in g2bulk.catalogue(game)}
             est = f" (≈ ${sum(prices.get(n, 0) for n in plan):.2f})"
         except Exception:
             est = ""

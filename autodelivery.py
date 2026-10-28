@@ -21,6 +21,8 @@
     DRY_RUN         - "1" (по умолчанию): ничего не покупать, только показать в группе план.
                       "0": боевой режим, деньги списываются.
     STATE_DIR       - папка для файла состояния (на Railway - путь к подключённому Volume)
+    BUYER_ERROR_MESSAGES - "on": при ошибках писать покупателю в чат GGSel.
+                      По умолчанию выключено: при ошибке пишется только в группу.
 
 Второй поставщик — G2Bulk (см. g2bulk.py). Товары с "kind": "g2bulk" в products.json.
     G2BULK_API_KEY  - X-API-Key из кабинета g2bulk.com
@@ -52,6 +54,7 @@ PRODUCTS_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "produc
 
 LOW_BALANCE = float(os.getenv("LOW_BALANCE", "20") or 20)  # предупреждать, если баланс ниже ($)
 G2_DRY_RUN = DRY_RUN or os.getenv("G2BULK_DRY_RUN", "1").strip().lower() not in ("0", "off", "false", "no")
+BUYER_ERROR_MESSAGES = os.getenv("BUYER_ERROR_MESSAGES", "off").strip().lower() in ("on", "1", "true", "yes")
 G2_LOW_BALANCE = float(os.getenv("G2BULK_LOW_BALANCE", "20") or 20)
 POLL_EVERY = 15          # секунд между проверками статуса заказа в EpinBy
 POLL_TIMEOUT = 20 * 60   # сколько ждать выполнения одного пакета
@@ -387,9 +390,9 @@ def _deliver(invoice_id, product, info, resume=None):
         if e.code == "VALIDATION_ERROR":
             _set_status(invoice_id, status="manual", error="неверный ID")
             if not DRY_RUN:
-                _send_chat(invoice_id, MSG_BAD_ID.format(player_id=player_id))
+                _send_error_chat(invoice_id, MSG_BAD_ID.format(player_id=player_id))
             _notify(f"⚠️ Заказ {invoice_id}: EpinBy не нашёл игрока с ID {player_id}. "
-                    f"Покупатель{' (тест: не уведомлён)' if DRY_RUN else ''} попрошен проверить ID.\n"
+                    f"Покупателю не писал, выдайте вручную.\n"
                     f"Ответ: {e.message}")
             return
         print(f"Заказ {invoice_id}: проверка игрока не удалась ({e.code}), продолжаю")
@@ -411,7 +414,7 @@ def _deliver(invoice_id, product, info, resume=None):
             continue
         _set_status(invoice_id, status="manual", error=err, done=done)
         rest = plan[idx:]
-        _send_chat(invoice_id, MSG_MANUAL)
+        _send_error_chat(invoice_id, MSG_MANUAL)
         _notify(f"❗ Заказ {invoice_id}: выдача остановилась.\n"
                 f"Игрок: {who}\nВыдано: {' + '.join(map(str, done)) or 'ничего'}\n"
                 f"Не выдано: {' + '.join(map(str, rest))} UC\nПричина: {err}\n"
@@ -476,6 +479,12 @@ def _wait_order(order_id, status):
         except Exception as e:
             print(f"EpinBy #{order_id}: статус не получен:", _hide(e)[:150])
     return status
+
+
+def _send_error_chat(invoice_id, text):
+    """Сообщение покупателю об ошибке. По умолчанию выключено (BUYER_ERROR_MESSAGES=on - включить)."""
+    if BUYER_ERROR_MESSAGES:
+        _send_chat(invoice_id, text)
 
 
 def _send_chat(invoice_id, text):
@@ -543,9 +552,9 @@ def _deliver_stars(invoice_id, product, info, resume=None):
         if e.code in ("VALIDATION_ERROR", "RECIPIENT_NOT_FOUND", "NOT_FOUND"):
             _set_status(invoice_id, status="manual", error="неверный username")
             if not DRY_RUN:
-                _send_chat(invoice_id, MSG_BAD_USERNAME.format(username=username))
+                _send_error_chat(invoice_id, MSG_BAD_USERNAME.format(username=username))
             _notify(f"⚠️ Заказ {invoice_id}: EpinBy не нашёл Telegram {username}. "
-                    f"Покупатель{' (тест: не уведомлён)' if DRY_RUN else ''} попрошен проверить username.\n"
+                    f"Покупателю не писал, выдайте вручную.\n"
                     f"Ответ: {e.message}")
             return
         print(f"Заказ {invoice_id}: проверка получателя не удалась ({e.code}), продолжаю")
@@ -593,7 +602,7 @@ def _deliver_stars(invoice_id, product, info, resume=None):
         err = f"EpinBy #{order.get('order_id')}: статус {status}"
 
     _set_status(invoice_id, status="manual", error=err)
-    _send_chat(invoice_id, MSG_MANUAL)
+    _send_error_chat(invoice_id, MSG_MANUAL)
     _notify(f"❗ Заказ {invoice_id}: {amount} ⭐ для {username} не выдано.\nПричина: {err}\n"
             f"Проверьте в EpinBy и доделайте вручную." + _balance_line())
 
@@ -848,9 +857,9 @@ def _g2_execute(invoice_id, product, player_id, server_id, amount, plan):
         if not G2_DRY_RUN:
             msg = (MSG_BAD_ID_SERVER.format(player_id=player_id, server_id=server_id) if server_id
                    else MSG_BAD_ID.format(player_id=player_id))
-            _send_chat(invoice_id, msg)
+            _send_error_chat(invoice_id, msg)
         _notify(f"⚠️ Заказ {invoice_id} ({title}): G2Bulk не нашёл игрока {who}. "
-                f"Покупатель{' (тест: не уведомлён)' if G2_DRY_RUN else ''} попрошен проверить ID.")
+                f"Покупателю не писал, выдайте вручную.")
         return
     if nickname:
         who += f" ({nickname})"
@@ -878,7 +887,7 @@ def _g2_execute(invoice_id, product, player_id, server_id, amount, plan):
         if note:
             err = f"{err}\n{note}"
         _set_status(invoice_id, status="manual", error=err, done=done)
-        _send_chat(invoice_id, MSG_MANUAL)
+        _send_error_chat(invoice_id, MSG_MANUAL)
         _notify(f"❗ Заказ {invoice_id} ({title}): выдача через G2Bulk остановилась.\n"
                 f"Игрок: {who}\nВыдано: {' + '.join(done) or 'ничего'}\n"
                 f"Не выдано: {' + '.join(_alts(n)[-1] for n in plan[idx:])}\nПричина: {err}\n"

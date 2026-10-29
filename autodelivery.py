@@ -21,6 +21,8 @@
     DRY_RUN         - "1" (по умолчанию): ничего не покупать, только показать в группе план.
                       "0": боевой режим, деньги списываются.
     STATE_DIR       - папка для файла состояния (на Railway - путь к подключённому Volume)
+    PACKS_DRY_RUN   - "1" (по умолчанию): товары "kind": "epinby_mix" (UC + наборы, Prime,
+                      Elite Pass по названию) в тестовом режиме. "0": боевой режим.
     BUYER_ERROR_MESSAGES - "on": при ошибках писать покупателю в чат GGSel.
                       По умолчанию выключено: при ошибке пишется только в группу.
 
@@ -55,6 +57,8 @@ PRODUCTS_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "produc
 LOW_BALANCE = float(os.getenv("LOW_BALANCE", "20") or 20)  # предупреждать, если баланс ниже ($)
 G2_DRY_RUN = DRY_RUN or os.getenv("G2BULK_DRY_RUN", "1").strip().lower() not in ("0", "off", "false", "no")
 BUYER_ERROR_MESSAGES = os.getenv("BUYER_ERROR_MESSAGES", "off").strip().lower() in ("on", "1", "true", "yes")
+# новые товары EpinBy (наборы, Prime, Elite Pass): отдельный тестовый режим
+MIX_DRY_RUN = DRY_RUN or os.getenv("PACKS_DRY_RUN", "1").strip().lower() not in ("0", "off", "false", "no")
 G2_LOW_BALANCE = float(os.getenv("G2BULK_LOW_BALANCE", "20") or 20)
 POLL_EVERY = 15          # секунд между проверками статуса заказа в EpinBy
 POLL_TIMEOUT = 20 * 60   # сколько ждать выполнения одного пакета
@@ -155,6 +159,9 @@ def setup(notify, send_chat, hide):
             text += f"\nБаланс EpinBy: ${epinby_get('/getMe').get('balance')}"
         except Exception as e:
             print("Автовыдача: EpinBy не ответил:", _hide(e))
+    report = _mix_startup_report()
+    if report:
+        text += "\n\n" + report
     report = _g2_startup_report()
     if report:
         text += "\n\n" + report
@@ -345,6 +352,8 @@ def _deliver_safe(invoice_id, product, info, resume=None):
             _deliver_stars(invoice_id, product, info, resume)
         elif product.get("kind") == "g2bulk":
             _deliver_g2bulk(invoice_id, product, info, resume)
+        elif product.get("kind") == "epinby_mix":
+            _deliver_mix(invoice_id, product, info, resume)
         else:
             _deliver(invoice_id, product, info, resume)
     except Exception as e:
@@ -428,9 +437,15 @@ def _deliver(invoice_id, product, info, resume=None):
 
 
 def _buy_pack(invoice_id, idx, size, player_id):
-    """Покупает один пакет, перебирая основной и запасные товары. -> (успех, product_id, ошибка)"""
+    """Покупает один пакет UC, перебирая основной и запасные товары. -> (успех, product_id, ошибка)"""
+    return _buy_ids(invoice_id, idx, f"{size} UC", _config["uc_packs"][str(size)]["ids"], player_id)
+
+
+def _buy_ids(invoice_id, idx, label, ids, player_id):
+    """Покупает одну часть заказа в EpinBy, перебирая основной и запасные товары."""
+    size = label
     last_err = "нет товаров"
-    for pid in _config["uc_packs"][str(size)]["ids"]:
+    for pid in ids:
         key = f"ggsel-{invoice_id}-{idx}-{pid}"
         body = {"product_id": pid, "qty": 1, "player_id": player_id}
         order = None
@@ -442,11 +457,11 @@ def _buy_pack(invoice_id, idx, size, player_id):
                 if e.code == "INSUFFICIENT_FUNDS":
                     _notify("💸 На балансе EpinBy не хватает денег! Пополните баланс.")
                     return False, pid, "мало денег на балансе EpinBy"
-                last_err = f"{size} UC (товар {pid}): {e.code} {e.message}"
+                last_err = f"{size} (товар {pid}): {e.code} {e.message}"
                 break
             except Exception as e:
                 # сеть: заказ мог создаться, поэтому повторяем с ТЕМ ЖЕ ключом - дубля не будет
-                last_err = f"{size} UC (товар {pid}): сеть: {_hide(e)[:150]}"
+                last_err = f"{size} (товар {pid}): сеть: {_hide(e)[:150]}"
                 time.sleep(5)
         if order is None:
             if "сеть" in last_err:
@@ -457,9 +472,9 @@ def _buy_pack(invoice_id, idx, size, player_id):
 
         status = _wait_order(order.get("order_id"), order.get("status"))
         if status == "COMPLETED":
-            print(f"Заказ {invoice_id}: {size} UC выдано (товар {pid}, EpinBy #{order.get('order_id')})")
+            print(f"Заказ {invoice_id}: {size} выдано (товар {pid}, EpinBy #{order.get('order_id')})")
             return True, pid, None
-        last_err = f"{size} UC (товар {pid}, EpinBy #{order.get('order_id')}): статус {status}"
+        last_err = f"{size} (товар {pid}, EpinBy #{order.get('order_id')}): статус {status}"
         if status == "TIMEOUT":
             # заказ ещё может выполниться - запасной не берём, чтобы не выдать дважды
             return False, pid, last_err + " (долго выполняется, проверьте в EpinBy)"
@@ -991,3 +1006,200 @@ def _g2_wait(order_id):
         if time.time() > deadline:
             return "TIMEOUT"
         time.sleep(POLL_EVERY)
+
+
+# ---------------------------------------------------------------- EpinBy: UC + наборы по названию
+
+_ep_catalogue = {"ts": 0, "items": []}
+EP_CATALOGUE_TTL = 10 * 60
+_PRICE_TAIL = re.compile(r"\(\s*[+\-−]?\s*\d[\d\s.,]*\s*(?:rub|руб|₽|usd|\$|eur|€|uah|kzt)?\.?\s*\)\s*$", re.I)
+_UC_RE = re.compile(r"^(\d[\d\s]*)\s*(?:uc|юс|юси)$", re.I)
+
+
+def _ep_clean(text):
+    """'⚡Prime (1 Month)⚡ (+10.0 RUB)' -> 'prime (1 month)'. Скобки внутри названия остаются."""
+    t = _PRICE_TAIL.sub("", str(text or "").strip())
+    t = re.sub(r"[^\w\s()+\-.]", " ", t)
+    return re.sub(r"\s+", " ", t).strip().lower()
+
+
+def _ep_topups(fresh=False):
+    """Все товары-пополнения EpinBy (с кэшем на 10 минут)."""
+    if not fresh and _ep_catalogue["items"] and time.time() - _ep_catalogue["ts"] < EP_CATALOGUE_TTL:
+        return _ep_catalogue["items"]
+    items, page = [], 1
+    while page <= 50:
+        headers = {"X-API-KEY": EPINBY_KEY, "Accept": "application/json"}
+        r = requests.get(EPINBY_API + "/products", params={"type": "topup", "per_page": 100, "page": page},
+                         headers=headers, timeout=30)
+        data = r.json()
+        if not data.get("success"):
+            raise EpinbyError((data.get("error") or {}).get("code", "UNKNOWN"),
+                              (data.get("error") or {}).get("message", "каталог не получен"), r.status_code)
+        items += data.get("data") or []
+        meta = data.get("meta") or {}
+        if page >= int(meta.get("last_page") or 1):
+            break
+        page += 1
+    _ep_catalogue.update(ts=time.time(), items=items)
+    return items
+
+
+def _ep_category(product):
+    """Категория товаров PUBG: задана в настройке или та же, что у основного пакета UC."""
+    if product.get("category_id"):
+        return int(product["category_id"])
+    ref = int(product.get("category_from_product") or 0)
+    if not ref:
+        packs = _config.get("uc_packs", {})
+        for k, v in packs.items():
+            if not k.startswith("_") and v.get("ids"):
+                ref = int(v["ids"][0])
+                break
+    for it in _ep_topups():
+        if int(it.get("id") or 0) == ref:
+            return int(it.get("category_id") or 0)
+    return 0
+
+
+def _ep_find(product, name):
+    """Название варианта -> товар EpinBy. Возвращает (товар, ошибка)."""
+    want = _ep_clean((product.get("aliases") or {}).get(_ep_clean(name), name))
+    for k, v in (product.get("aliases") or {}).items():
+        if _ep_clean(k) == _ep_clean(name):
+            want = _ep_clean(v)
+    found = [it for it in _ep_topups() if _ep_clean(it.get("name")) == want]
+    if not found:
+        return None, f"«{_PRICE_TAIL.sub('', str(name)).strip()}» нет в каталоге EpinBy"
+    cat = _ep_category(product)
+    same = [it for it in found if cat and int(it.get("category_id") or 0) == cat]
+    if len(same) == 1:
+        return same[0], None
+    if len(found) == 1:
+        return found[0], None
+    cats = ", ".join(sorted({str(it.get("category")) for it in found}))
+    return None, f"«{name}» есть в нескольких категориях EpinBy ({cats}), укажите category_id"
+
+
+def _mix_startup_report():
+    items = [(k, v) for k, v in _config.get("ggsel_products", {}).items()
+             if not k.startswith("_") and v.get("kind") == "epinby_mix"]
+    if not items or not EPINBY_KEY:
+        return ""
+    mode = "🧪 тест" if MIX_DRY_RUN else "🟢 боевой"
+    lines = [f"EpinBy наборы ({mode}):"]
+    for gid, p in items:
+        title = p.get("title", gid)
+        try:
+            cat = _ep_category(p)
+            n = len([it for it in _ep_topups() if int(it.get("category_id") or 0) == cat])
+        except Exception as e:
+            lines.append(f"❗ {title}: каталог EpinBy не получен: {_hide(e)[:150]}")
+            continue
+        lines.append(f"• {title}: в категории EpinBy {n} товаров")
+        missing = [nm for nm in p.get("check_names") or [] if _ep_find(p, nm)[0] is None]
+        if missing:
+            lines.append(f"  ❗ не найдены: {', '.join(missing)}")
+        elif p.get("check_names"):
+            lines.append(f"  проверено названий: {len(p['check_names'])}, все найдены")
+    return "\n".join(lines)
+
+
+def _mix_plan(product, options, id_name):
+    """Опции заказа -> список частей [{"label", "ids", "price"}]. Каждая непустая опция, кроме ID, — товар."""
+    ignore = [w.lower() for w in product.get("ignore_options") or []]
+    plan = []
+    for name, value in options:
+        if name == id_name or any(w in name.lower() for w in ignore):
+            continue
+        text = _ep_clean(value)
+        if not text or any(text == w or text.startswith(w + " ") for w in NO_WORDS):
+            continue
+        item, err = _ep_find(product, value)
+        if item:
+            plan.append({"label": str(item.get("name")), "ids": [int(item["id"])],
+                         "price": float(item.get("price") or 0)})
+            continue
+        m = _UC_RE.match(text)
+        if m:
+            amount = int(re.sub(r"\s", "", m.group(1)))
+            packs = {int(k): v["price"] for k, v in _config["uc_packs"].items() if not k.startswith("_")}
+            sizes = split_uc(amount, packs)
+            if not sizes:
+                raise _Manual(f"{amount} UC нельзя собрать из пакетов")
+            for size in sizes:
+                plan.append({"label": f"{size} UC", "ids": _config["uc_packs"][str(size)]["ids"],
+                             "price": packs[size]})
+            continue
+        raise _Manual(err)
+    if not plan:
+        raise _Manual("в заказе не нашёл выбранных товаров")
+    return plan
+
+
+def _deliver_mix(invoice_id, product, info, resume=None):
+    title = product.get("title", "")
+    if resume:
+        player_id, plan = resume["player_id"], resume["plan"]
+    else:
+        options = _options(info or {})
+        id_name = next((n for n, _ in options if product["id_option"].lower() in n.lower()), None)
+        player_id = parse_player_id(dict(options).get(id_name)) if id_name else None
+        try:
+            cnt = float(str((info or {}).get("cnt_goods") or 1).replace(",", "."))
+            if cnt != 1:
+                raise _Manual(f"количество в заказе {cnt:g}, автовыдача рассчитана на 1")
+            if not player_id:
+                raise _Manual("не нашёл ID игрока")
+            plan = _mix_plan(product, options, id_name)
+        except _Manual as e:
+            _set_status(invoice_id, status="manual", error=str(e))
+            _notify(f"❗ Автовыдача, заказ {invoice_id} ({title}): {e}. Выдайте вручную.\n"
+                    f"Опции: {options or (info or {}).get('options')}")
+            return
+        except Exception as e:
+            _set_status(invoice_id, status="manual", error="каталог EpinBy недоступен")
+            _notify(f"❗ Заказ {invoice_id} ({title}): каталог EpinBy не получен, выдайте вручную.\n"
+                    f"{_hide(e)[:200]}")
+            return
+        _set_status(invoice_id, status="new", player_id=player_id, plan=plan)
+
+    plan_text = " + ".join(p["label"] for p in plan)
+    est = sum(p.get("price") or 0 for p in plan)
+    nickname = None
+    try:
+        v = epinby_post("/validate-player", {"product_id": plan[0]["ids"][0], "player_id": player_id})
+        nickname = v.get("nickname") or v.get("player_name")
+    except EpinbyError as e:
+        if e.code == "VALIDATION_ERROR":
+            _set_status(invoice_id, status="manual", error="неверный ID")
+            _notify(f"⚠️ Заказ {invoice_id} ({title}): EpinBy не нашёл игрока с ID {player_id}. "
+                    f"Покупателю не писал, выдайте вручную.\nОтвет: {e.message}")
+            return
+        print(f"Заказ {invoice_id}: проверка игрока не удалась ({e.code}), продолжаю")
+    who = f"{player_id}" + (f" ({nickname})" if nickname else "")
+
+    if MIX_DRY_RUN:
+        _set_status(invoice_id, status="dry_run")
+        _notify(f"🧪 Тест. Заказ {invoice_id} ({title}) → игрок {who}.\n"
+                f"Купил бы: {plan_text} (≈ ${est:.2f}).\nНичего не куплено (PACKS_DRY_RUN=1)."
+                + _balance_line())
+        return
+
+    _set_status(invoice_id, status="in_progress")
+    done = []
+    for idx, part in enumerate(plan):
+        ok, _, err = _buy_ids(invoice_id, idx, part["label"], part["ids"], player_id)
+        if ok:
+            done.append(part["label"])
+            continue
+        _set_status(invoice_id, status="manual", error=err, done=done)
+        _notify(f"❗ Заказ {invoice_id} ({title}): выдача остановилась.\n"
+                f"Игрок: {who}\nВыдано: {' + '.join(done) or 'ничего'}\n"
+                f"Не выдано: {' + '.join(p['label'] for p in plan[idx:])}\nПричина: {err}\n"
+                f"Покупателю не писал, доделайте вручную." + _balance_line())
+        return
+
+    _set_status(invoice_id, status="done", done=done)
+    _send_chat(invoice_id, MSG_DONE)
+    _notify(f"✅ Заказ {invoice_id} выдан автоматически: {plan_text} → {who}." + _balance_line())

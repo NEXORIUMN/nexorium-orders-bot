@@ -131,6 +131,30 @@
         5800,
         23200
       ]
+    },
+    "102795880": {
+      "_comment": "PUBG: наборы, Prime, Elite Pass и UC через EpinBy. Каждая выбранная опция (кроме ID) — отдельная покупка. Название варианта на GGSel должно совпадать с названием товара в EpinBy (без смайлов и цены). Если отличается — добавьте в aliases: \"как на GGSel\": \"как в EpinBy\". Варианты 'нет' пропускаются. UC пишутся как '660 UC'.",
+      "title": "PUBG наборы и Prime",
+      "kind": "epinby_mix",
+      "id_option": "свой id",
+      "aliases": {},
+      "check_names": [
+        "First Purchase Pack",
+        "Mythic Emblem Pack",
+        "Prime (1 Month)",
+        "Prime (3 Months)",
+        "Prime (6 Months)",
+        "Prime (12 Months)",
+        "Prime Plus (1 Month)",
+        "Prime Plus (3 Months)",
+        "Prime Plus (6 Months)",
+        "Prime Plus (12 Months)",
+        "Elite Pass LV1-50",
+        "Elite Pass LV1-100",
+        "Elite Pass Plus LV1-100",
+        "Weekly Deal Pack 1",
+        "Weekly Deal Pack 2"
+      ]
     }
   }
 }

@@ -176,7 +176,8 @@
       "check_names": [
         "Premium Battle Pass Activation Card",
         "Advanced Battle Pass Activation Card"
-      ]
+      ],
+      "dry_run_default": "0"
     }
   }
 }

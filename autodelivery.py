@@ -1095,7 +1095,8 @@ def _mix_dry(product):
     env = product.get("dry_run_env")
     if not env:
         return MIX_DRY_RUN
-    return DRY_RUN or os.getenv(env, "1").strip().lower() not in ("0", "off", "false", "no")
+    default = str(product.get("dry_run_default", "1"))
+    return DRY_RUN or os.getenv(env, default).strip().lower() not in ("0", "off", "false", "no")
 
 
 def _ep_amount_packs(product):

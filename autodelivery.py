@@ -886,6 +886,8 @@ def _g2_execute(invoice_id, product, player_id, server_id, amount, plan):
     who = f"{player_id}" + (f" / сервер {server_id}" if server_id else "")
 
     valid, nickname = g2bulk.check_player(game, player_id, server_id)
+    if nickname and str(nickname).strip().upper() == str(player_id).strip().upper():
+        nickname = None   # некоторые игры вместо ника возвращают тот же ID
     if valid is False:
         _set_status(invoice_id, status="manual", error="неверный ID")
         if not G2_DRY_RUN:

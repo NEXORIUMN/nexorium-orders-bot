@@ -73,6 +73,21 @@
       "variants": {
         "премиум 30 дней": "Premium",
         "премиум плюс": "Premium Plus"
+      },
+      "extra_amount": {
+        "option": "монет",
+        "unit": "WEB BONUS",
+        "unit_title": "монет",
+        "fallback": {
+          "50 + 5 WEB BONUS": "50 Coins",
+          "125 + 20 WEB BONUS": "135 Coins",
+          "250 + 65 WEB BONUS": "290 Coins (15% more value)",
+          "500 + 175 WEB BONUS": "630 Coins (25% more value)",
+          "1250 + 500 WEB BONUS": "1675 Coins (30% more value)"
+        }
+      },
+      "no_fallback": {
+        "2500 + 1250 WEB BONUS": "3750 монет через WEB BONUS не прошло. Обычным пакетом не заменяю: номиналы различаются (3550 вместо 3750)."
       }
     },
     "103551150": {

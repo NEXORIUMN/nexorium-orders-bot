@@ -854,6 +854,18 @@ def _deliver_g2bulk(invoice_id, product, info, resume=None):
         else:
             plan, what = _g2_plan_amount(product, chosen, info)
         extra = _g2_extra(product, options)
+        # доп. валюта из отдельного поля (например, «Нужны МОНЕТЫ?» в товаре с премиумом)
+        ea = product.get("extra_amount")
+        if ea:
+            chosen_ea = _find_option(options, ea["option"])
+            text_ea = _clean(chosen_ea)
+            if text_ea and not any(text_ea == w or text_ea.startswith(w + " ") for w in NO_WORDS):
+                sub = {k: v for k, v in product.items() if k not in ("mode", "variants", "extra_amount")}
+                sub.update({k: v for k, v in ea.items() if k != "option"})
+                sub["item_option"] = ea["option"]
+                ea_plan, ea_what = _g2_plan_amount(sub, chosen_ea, info)
+                plan += ea_plan
+                what += " + " + ea_what
         if extra:
             plan += extra
             what += " + " + " + ".join(extra)

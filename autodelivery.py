@@ -658,8 +658,12 @@ def _parse_number(text):
     """'86 алмазов (+150 RUB)' -> 86, '50+1 ЗОЛОТА' -> 51. Число берётся до скобки с ценой."""
     if not text:
         return None
-    m = re.search(r"\d+(?:\s*\+\s*\d+)*", str(text).split("(")[0])
-    return sum(int(x) for x in re.findall(r"\d+", m.group(0))) if m else None
+    # число может быть с пробелом-разделителем тысяч: «10 000», и с бонусом: «50+1»
+    num = r"\d{1,3}(?:[ \u00a0]\d{3})+(?!\d)|\d+"
+    m = re.search(rf"(?:{num})(?:\s*\+\s*(?:{num}))*", str(text).split("(")[0])
+    if not m:
+        return None
+    return sum(int(re.sub(r"\D", "", x)) for x in re.findall(num, m.group(0)))
 
 
 def _parse_g2_id(product, text):

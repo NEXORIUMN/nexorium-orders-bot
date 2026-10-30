@@ -155,6 +155,28 @@
         "Weekly Deal Pack 1",
         "Weekly Deal Pack 2"
       ]
+    },
+    "_arena_breakout_infinite": {
+      "_comment": "ШАБЛОН: заменить ключ на ID товара GGSel. amount_packs - сколько облигаций получает покупатель: товар EpinBy (500 даёт 510 с бонусом). Пропуска - по названию, русские названия на GGSel привязать в aliases.",
+      "title": "Arena Breakout: Infinity",
+      "kind": "epinby_mix",
+      "category_name": "Arena Breakout Infinite",
+      "dry_run_env": "ARENA_DRY_RUN",
+      "id_option": "id",
+      "unit_title": "облигаций",
+      "amount_packs": {
+        "100": "100",
+        "510": "500",
+        "1040": "1000",
+        "2625": "2500",
+        "5300": "5000",
+        "10800": "10000"
+      },
+      "aliases": {},
+      "check_names": [
+        "Premium Battle Pass Activation Card",
+        "Advanced Battle Pass Activation Card"
+      ]
     }
   }
 }

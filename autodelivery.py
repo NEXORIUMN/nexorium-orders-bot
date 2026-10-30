@@ -1046,9 +1046,15 @@ def _ep_topups(fresh=False):
 
 
 def _ep_category(product):
-    """Категория товаров PUBG: задана в настройке или та же, что у основного пакета UC."""
+    """Категория EpinBy: category_id, category_name или та же, что у основного пакета UC (PUBG)."""
     if product.get("category_id"):
         return int(product["category_id"])
+    if product.get("category_name"):
+        want = str(product["category_name"]).strip().lower()
+        for it in _ep_topups():
+            if str(it.get("category") or "").strip().lower() == want:
+                return int(it.get("category_id") or 0)
+        return 0
     ref = int(product.get("category_from_product") or 0)
     if not ref:
         packs = _config.get("uc_packs", {})
@@ -1069,6 +1075,10 @@ def _ep_find(product, name):
         if _ep_clean(k) == _ep_clean(name):
             want = _ep_clean(v)
     found = [it for it in _ep_topups() if _ep_clean(it.get("name")) == want]
+    if product.get("category_name") or product.get("category_id"):
+        # категория задана явно — только она (у разных игр бывают одинаковые названия, например «100»)
+        cat = _ep_category(product)
+        found = [it for it in found if cat and int(it.get("category_id") or 0) == cat]
     if not found:
         return None, f"«{_PRICE_TAIL.sub('', str(name)).strip()}» нет в каталоге EpinBy"
     cat = _ep_category(product)
@@ -1081,15 +1091,31 @@ def _ep_find(product, name):
     return None, f"«{name}» есть в нескольких категориях EpinBy ({cats}), укажите category_id"
 
 
+def _mix_dry(product):
+    env = product.get("dry_run_env")
+    if not env:
+        return MIX_DRY_RUN
+    return DRY_RUN or os.getenv(env, "1").strip().lower() not in ("0", "off", "false", "no")
+
+
+def _ep_amount_packs(product):
+    """{сколько получает покупатель: товар EpinBy} для пакетов валюты в категории товара."""
+    result = {}
+    for amount, name in (product.get("amount_packs") or {}).items():
+        item, err = _ep_find(product, name)
+        if item:
+            result[int(amount)] = item
+    return result
+
+
 def _mix_startup_report():
     items = [(k, v) for k, v in _config.get("ggsel_products", {}).items()
              if not k.startswith("_") and v.get("kind") == "epinby_mix"]
     if not items or not EPINBY_KEY:
         return ""
-    mode = "🧪 тест" if MIX_DRY_RUN else "🟢 боевой"
-    lines = [f"EpinBy наборы ({mode}):"]
+    lines = ["EpinBy наборы:"]
     for gid, p in items:
-        title = p.get("title", gid)
+        title = p.get("title", gid) + (" (🧪 тест)" if _mix_dry(p) else " (🟢 боевой)")
         try:
             cat = _ep_category(p)
             n = len([it for it in _ep_topups() if int(it.get("category_id") or 0) == cat])
@@ -1097,6 +1123,14 @@ def _mix_startup_report():
             lines.append(f"❗ {title}: каталог EpinBy не получен: {_hide(e)[:150]}")
             continue
         lines.append(f"• {title}: в категории EpinBy {n} товаров")
+        if p.get("category_name") and not cat:
+            lines.append(f"  ❗ категория «{p['category_name']}» не найдена в EpinBy")
+            continue
+        if p.get("amount_packs"):
+            have = _ep_amount_packs(p)
+            lost = [str(a) for a in p["amount_packs"] if int(a) not in have]
+            lines.append(f"  пакеты: {', '.join(str(a) for a in sorted(have)) or 'нет'}"
+                         + (f"; ❗ не найдены: {', '.join(lost)}" if lost else ""))
         missing = [nm for nm in p.get("check_names") or [] if _ep_find(p, nm)[0] is None]
         if missing:
             lines.append(f"  ❗ не найдены: {', '.join(missing)}")
@@ -1120,6 +1154,19 @@ def _mix_plan(product, options, id_name):
             plan.append({"label": str(item.get("name")), "ids": [int(item["id"])],
                          "price": float(item.get("price") or 0)})
             continue
+        if product.get("amount_packs"):
+            amount = _parse_number(value)
+            if amount:
+                packs = _ep_amount_packs(product)
+                sizes = g2bulk.split(amount, {q: float(it.get("price") or 0) for q, it in packs.items()})
+                if not sizes:
+                    raise _Manual(f"{amount} нельзя собрать из пакетов EpinBy ({', '.join(map(str, sorted(packs)))})")
+                unit = product.get("unit_title", "")
+                for size in sizes:
+                    it = packs[size]
+                    plan.append({"label": f"{size} {unit}".strip(), "ids": [int(it["id"])],
+                                 "price": float(it.get("price") or 0)})
+                continue
         m = _UC_RE.match(text)
         if m:
             amount = int(re.sub(r"\s", "", m.group(1)))
@@ -1179,10 +1226,10 @@ def _deliver_mix(invoice_id, product, info, resume=None):
         print(f"Заказ {invoice_id}: проверка игрока не удалась ({e.code}), продолжаю")
     who = f"{player_id}" + (f" ({nickname})" if nickname else "")
 
-    if MIX_DRY_RUN:
+    if _mix_dry(product):
         _set_status(invoice_id, status="dry_run")
         _notify(f"🧪 Тест. Заказ {invoice_id} ({title}) → игрок {who}.\n"
-                f"Купил бы: {plan_text} (≈ ${est:.2f}).\nНичего не куплено (PACKS_DRY_RUN=1)."
+                f"Купил бы: {plan_text} (≈ ${est:.2f}).\nНичего не куплено ({product.get('dry_run_env') or 'PACKS_DRY_RUN'}=1)."
                 + _balance_line())
         return
 

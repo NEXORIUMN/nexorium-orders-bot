@@ -328,6 +328,9 @@ def start(sale, info, invoice_id, product_id):
     if _get_record(invoice_id):
         return True  # уже обрабатывали
     _set_status(invoice_id, status="new", product_id=str(product_id))
+    info = dict(info or {})
+    prod = (sale or {}).get("product") or {}
+    info["_product_name"] = str(prod.get("name") or (sale or {}).get("name") or info.get("name") or "")
     t = threading.Thread(target=_deliver_safe, args=(invoice_id, product, info), daemon=True)
     t.start()
     return True
@@ -1159,6 +1162,10 @@ def _mix_plan(product, options, id_name):
             amount = _parse_number(value)
             if amount:
                 packs = _ep_amount_packs(product)
+                base = {int(n): int(a) for a, n in (product.get("amount_packs") or {}).items()
+                        if str(n).isdigit()}
+                if amount not in packs and amount in base:
+                    amount = base[amount]   # «500 облигаций» = пакет 500 (+10 бонус)
                 sizes = g2bulk.split(amount, {q: float(it.get("price") or 0) for q, it in packs.items()})
                 if not sizes:
                     raise _Manual(f"{amount} нельзя собрать из пакетов EpinBy ({', '.join(map(str, sorted(packs)))})")
@@ -1180,6 +1187,11 @@ def _mix_plan(product, options, id_name):
                              "price": packs[size]})
             continue
         raise _Manual(err)
+    if not plan and product.get("amount_packs") and product.get("_title"):
+        head = str(product["_title"]).split("|")[0]
+        nums = re.findall(r"\d[\d\s]*(?:\+\s*\d+)?", head)
+        if len(nums) == 1:
+            return _mix_plan(product, [("_title", head)], id_name)
     if not plan:
         raise _Manual("в заказе не нашёл выбранных товаров")
     return plan
@@ -1199,7 +1211,7 @@ def _deliver_mix(invoice_id, product, info, resume=None):
                 raise _Manual(f"количество в заказе {cnt:g}, автовыдача рассчитана на 1")
             if not player_id:
                 raise _Manual("не нашёл ID игрока")
-            plan = _mix_plan(product, options, id_name)
+            plan = _mix_plan(dict(product, _title=(info or {}).get("_product_name", "")), options, id_name)
         except _Manual as e:
             _set_status(invoice_id, status="manual", error=str(e))
             _notify(f"❗ Автовыдача, заказ {invoice_id} ({title}): {e}. Выдайте вручную.\n"

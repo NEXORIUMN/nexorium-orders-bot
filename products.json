@@ -156,13 +156,12 @@
         "Weekly Deal Pack 2"
       ]
     },
-    "_arena_breakout_infinite": {
-      "_comment": "ШАБЛОН: заменить ключ на ID товара GGSel. amount_packs - сколько облигаций получает покупатель: товар EpinBy (500 даёт 510 с бонусом). Пропуска - по названию, русские названия на GGSel привязать в aliases.",
+    "103135767": {
       "title": "Arena Breakout: Infinity",
       "kind": "epinby_mix",
       "category_name": "Arena Breakout Infinite",
       "dry_run_env": "ARENA_DRY_RUN",
-      "id_option": "id",
+      "id_option": "user id",
       "unit_title": "облигаций",
       "amount_packs": {
         "100": "100",
@@ -172,12 +171,272 @@
         "5300": "5000",
         "10800": "10000"
       },
-      "aliases": {},
+      "aliases": {
+        "премиальный боевой пропуск": "Premium Battle Pass Activation Card",
+        "премиальный пропуск": "Premium Battle Pass Activation Card",
+        "премиум боевой пропуск": "Premium Battle Pass Activation Card",
+        "премиум пропуск": "Premium Battle Pass Activation Card",
+        "расширенный боевой пропуск": "Advanced Battle Pass Activation Card",
+        "расширенный пропуск": "Advanced Battle Pass Activation Card",
+        "продвинутый боевой пропуск": "Advanced Battle Pass Activation Card",
+        "продвинутый пропуск": "Advanced Battle Pass Activation Card"
+      },
       "check_names": [
         "Premium Battle Pass Activation Card",
         "Advanced Battle Pass Activation Card"
       ],
       "dry_run_default": "0"
+    },
+    "103135733": {
+      "title": "Arena Breakout: Infinity",
+      "kind": "epinby_mix",
+      "category_name": "Arena Breakout Infinite",
+      "dry_run_env": "ARENA_DRY_RUN",
+      "id_option": "user id",
+      "unit_title": "облигаций",
+      "amount_packs": {
+        "100": "100",
+        "510": "500",
+        "1040": "1000",
+        "2625": "2500",
+        "5300": "5000",
+        "10800": "10000"
+      },
+      "aliases": {
+        "премиальный боевой пропуск": "Premium Battle Pass Activation Card",
+        "премиальный пропуск": "Premium Battle Pass Activation Card",
+        "премиум боевой пропуск": "Premium Battle Pass Activation Card",
+        "премиум пропуск": "Premium Battle Pass Activation Card",
+        "расширенный боевой пропуск": "Advanced Battle Pass Activation Card",
+        "расширенный пропуск": "Advanced Battle Pass Activation Card",
+        "продвинутый боевой пропуск": "Advanced Battle Pass Activation Card",
+        "продвинутый пропуск": "Advanced Battle Pass Activation Card"
+      },
+      "check_names": [
+        "Premium Battle Pass Activation Card",
+        "Advanced Battle Pass Activation Card"
+      ],
+      "dry_run_default": "0"
+    },
+    "102900310": {
+      "title": "Arena Breakout: Infinity",
+      "kind": "epinby_mix",
+      "category_name": "Arena Breakout Infinite",
+      "dry_run_env": "ARENA_DRY_RUN",
+      "id_option": "user id",
+      "unit_title": "облигаций",
+      "amount_packs": {
+        "100": "100",
+        "510": "500",
+        "1040": "1000",
+        "2625": "2500",
+        "5300": "5000",
+        "10800": "10000"
+      },
+      "aliases": {
+        "премиальный боевой пропуск": "Premium Battle Pass Activation Card",
+        "премиальный пропуск": "Premium Battle Pass Activation Card",
+        "премиум боевой пропуск": "Premium Battle Pass Activation Card",
+        "премиум пропуск": "Premium Battle Pass Activation Card",
+        "расширенный боевой пропуск": "Advanced Battle Pass Activation Card",
+        "расширенный пропуск": "Advanced Battle Pass Activation Card",
+        "продвинутый боевой пропуск": "Advanced Battle Pass Activation Card",
+        "продвинутый пропуск": "Advanced Battle Pass Activation Card"
+      },
+      "check_names": [
+        "Premium Battle Pass Activation Card",
+        "Advanced Battle Pass Activation Card"
+      ],
+      "dry_run_default": "0"
+    },
+    "102900307": {
+      "title": "Arena Breakout: Infinity",
+      "kind": "epinby_mix",
+      "category_name": "Arena Breakout Infinite",
+      "dry_run_env": "ARENA_DRY_RUN",
+      "id_option": "user id",
+      "unit_title": "облигаций",
+      "amount_packs": {
+        "100": "100",
+        "510": "500",
+        "1040": "1000",
+        "2625": "2500",
+        "5300": "5000",
+        "10800": "10000"
+      },
+      "aliases": {
+        "премиальный боевой пропуск": "Premium Battle Pass Activation Card",
+        "премиальный пропуск": "Premium Battle Pass Activation Card",
+        "премиум боевой пропуск": "Premium Battle Pass Activation Card",
+        "премиум пропуск": "Premium Battle Pass Activation Card",
+        "расширенный боевой пропуск": "Advanced Battle Pass Activation Card",
+        "расширенный пропуск": "Advanced Battle Pass Activation Card",
+        "продвинутый боевой пропуск": "Advanced Battle Pass Activation Card",
+        "продвинутый пропуск": "Advanced Battle Pass Activation Card"
+      },
+      "check_names": [
+        "Premium Battle Pass Activation Card",
+        "Advanced Battle Pass Activation Card"
+      ],
+      "dry_run_default": "0"
+    },
+    "102900305": {
+      "title": "Arena Breakout: Infinity",
+      "kind": "epinby_mix",
+      "category_name": "Arena Breakout Infinite",
+      "dry_run_env": "ARENA_DRY_RUN",
+      "id_option": "user id",
+      "unit_title": "облигаций",
+      "amount_packs": {
+        "100": "100",
+        "510": "500",
+        "1040": "1000",
+        "2625": "2500",
+        "5300": "5000",
+        "10800": "10000"
+      },
+      "aliases": {
+        "премиальный боевой пропуск": "Premium Battle Pass Activation Card",
+        "премиальный пропуск": "Premium Battle Pass Activation Card",
+        "премиум боевой пропуск": "Premium Battle Pass Activation Card",
+        "премиум пропуск": "Premium Battle Pass Activation Card",
+        "расширенный боевой пропуск": "Advanced Battle Pass Activation Card",
+        "расширенный пропуск": "Advanced Battle Pass Activation Card",
+        "продвинутый боевой пропуск": "Advanced Battle Pass Activation Card",
+        "продвинутый пропуск": "Advanced Battle Pass Activation Card"
+      },
+      "check_names": [
+        "Premium Battle Pass Activation Card",
+        "Advanced Battle Pass Activation Card"
+      ],
+      "dry_run_default": "0"
+    },
+    "102900303": {
+      "title": "Arena Breakout: Infinity",
+      "kind": "epinby_mix",
+      "category_name": "Arena Breakout Infinite",
+      "dry_run_env": "ARENA_DRY_RUN",
+      "id_option": "user id",
+      "unit_title": "облигаций",
+      "amount_packs": {
+        "100": "100",
+        "510": "500",
+        "1040": "1000",
+        "2625": "2500",
+        "5300": "5000",
+        "10800": "10000"
+      },
+      "aliases": {
+        "премиальный боевой пропуск": "Premium Battle Pass Activation Card",
+        "премиальный пропуск": "Premium Battle Pass Activation Card",
+        "премиум боевой пропуск": "Premium Battle Pass Activation Card",
+        "премиум пропуск": "Premium Battle Pass Activation Card",
+        "расширенный боевой пропуск": "Advanced Battle Pass Activation Card",
+        "расширенный пропуск": "Advanced Battle Pass Activation Card",
+        "продвинутый боевой пропуск": "Advanced Battle Pass Activation Card",
+        "продвинутый пропуск": "Advanced Battle Pass Activation Card"
+      },
+      "check_names": [
+        "Premium Battle Pass Activation Card",
+        "Advanced Battle Pass Activation Card"
+      ],
+      "dry_run_default": "0"
+    },
+    "102900297": {
+      "title": "Arena Breakout: Infinity",
+      "kind": "epinby_mix",
+      "category_name": "Arena Breakout Infinite",
+      "dry_run_env": "ARENA_DRY_RUN",
+      "id_option": "user id",
+      "unit_title": "облигаций",
+      "amount_packs": {
+        "100": "100",
+        "510": "500",
+        "1040": "1000",
+        "2625": "2500",
+        "5300": "5000",
+        "10800": "10000"
+      },
+      "aliases": {
+        "премиальный боевой пропуск": "Premium Battle Pass Activation Card",
+        "премиальный пропуск": "Premium Battle Pass Activation Card",
+        "премиум боевой пропуск": "Premium Battle Pass Activation Card",
+        "премиум пропуск": "Premium Battle Pass Activation Card",
+        "расширенный боевой пропуск": "Advanced Battle Pass Activation Card",
+        "расширенный пропуск": "Advanced Battle Pass Activation Card",
+        "продвинутый боевой пропуск": "Advanced Battle Pass Activation Card",
+        "продвинутый пропуск": "Advanced Battle Pass Activation Card"
+      },
+      "check_names": [
+        "Premium Battle Pass Activation Card",
+        "Advanced Battle Pass Activation Card"
+      ],
+      "dry_run_default": "0"
+    },
+    "102900281": {
+      "title": "Arena Breakout: Infinity",
+      "kind": "epinby_mix",
+      "category_name": "Arena Breakout Infinite",
+      "dry_run_env": "ARENA_DRY_RUN",
+      "id_option": "user id",
+      "unit_title": "облигаций",
+      "amount_packs": {
+        "100": "100",
+        "510": "500",
+        "1040": "1000",
+        "2625": "2500",
+        "5300": "5000",
+        "10800": "10000"
+      },
+      "aliases": {
+        "премиальный боевой пропуск": "Premium Battle Pass Activation Card",
+        "премиальный пропуск": "Premium Battle Pass Activation Card",
+        "премиум боевой пропуск": "Premium Battle Pass Activation Card",
+        "премиум пропуск": "Premium Battle Pass Activation Card",
+        "расширенный боевой пропуск": "Advanced Battle Pass Activation Card",
+        "расширенный пропуск": "Advanced Battle Pass Activation Card",
+        "продвинутый боевой пропуск": "Advanced Battle Pass Activation Card",
+        "продвинутый пропуск": "Advanced Battle Pass Activation Card"
+      },
+      "check_names": [
+        "Premium Battle Pass Activation Card",
+        "Advanced Battle Pass Activation Card"
+      ],
+      "dry_run_default": "0"
+    },
+    "102900099": {
+      "title": "Arena Breakout: Infinity",
+      "kind": "epinby_mix",
+      "category_name": "Arena Breakout Infinite",
+      "dry_run_env": "ARENA_DRY_RUN",
+      "id_option": "user id",
+      "unit_title": "облигаций",
+      "amount_packs": {
+        "100": "100",
+        "510": "500",
+        "1040": "1000",
+        "2625": "2500",
+        "5300": "5000",
+        "10800": "10000"
+      },
+      "aliases": {
+        "премиальный боевой пропуск": "Premium Battle Pass Activation Card",
+        "премиальный пропуск": "Premium Battle Pass Activation Card",
+        "премиум боевой пропуск": "Premium Battle Pass Activation Card",
+        "премиум пропуск": "Premium Battle Pass Activation Card",
+        "расширенный боевой пропуск": "Advanced Battle Pass Activation Card",
+        "расширенный пропуск": "Advanced Battle Pass Activation Card",
+        "продвинутый боевой пропуск": "Advanced Battle Pass Activation Card",
+        "продвинутый пропуск": "Advanced Battle Pass Activation Card"
+      },
+      "check_names": [
+        "Premium Battle Pass Activation Card",
+        "Advanced Battle Pass Activation Card"
+      ],
+      "dry_run_default": "0"
+    },
+    "_arena_help": {
+      "_comment": "Arena Breakout: Infinity (EpinBy, категория Arena Breakout Infinite). Пропуска по названию (aliases), облигации по количеству из опции или из названия товара. Тестовый режим: ARENA_DRY_RUN=1."
     }
   }
 }

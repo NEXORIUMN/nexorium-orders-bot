@@ -169,7 +169,9 @@
         "Elite Pass Plus LV1-100",
         "Weekly Deal Pack 1",
         "Weekly Deal Pack 2"
-      ]
+      ],
+      "dry_run_env": "PACKS_DRY_RUN",
+      "dry_run_default": "0"
     },
     "103135767": {
       "title": "Arena Breakout: Infinity",

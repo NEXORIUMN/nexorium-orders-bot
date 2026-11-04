@@ -124,7 +124,7 @@
       "category_match": "blood strike",
       "id_option": "user id",
       "dry_run_env": "BLOODSTRIKE_DRY_RUN",
-      "dry_run_default": "1",
+      "dry_run_default": "0",
       "aliases": {},
       "_comment": "Blood Strike пропуска через EpinBy (раньше G2Bulk). Вариант на GGSel должен совпадать с названием товара EpinBy; если нет — добавьте в aliases: \"как на GGSel\": \"как в EpinBy\".",
       "title": "Blood Strike пропуска"
@@ -134,7 +134,7 @@
       "category_match": "blood strike",
       "id_option": "user id",
       "dry_run_env": "BLOODSTRIKE_DRY_RUN",
-      "dry_run_default": "1",
+      "dry_run_default": "0",
       "aliases": {},
       "_comment": "Blood Strike золото через EpinBy (раньше G2Bulk). Пакеты берутся из каталога EpinBy по числу в названии (100 + 5 Gold = 105). Поле «Нужен пропуск?» — отдельная покупка по названию.",
       "title": "Blood Strike золото",

@@ -1066,10 +1066,32 @@ def _ep_topups(fresh=False):
     return items
 
 
+def _ep_category_candidates(product):
+    """Категории EpinBy, в названии которых есть category_match. -> {id: название}"""
+    want = str(product.get("category_match") or "").strip().lower()
+    if not want:
+        return {}
+    found = {}
+    for it in _ep_topups():
+        name = str(it.get("category") or "").strip()
+        if want in name.lower():
+            found[int(it.get("category_id") or 0)] = name
+    return found
+
+
 def _ep_category(product):
-    """Категория EpinBy: category_id, category_name или та же, что у основного пакета UC (PUBG)."""
+    """Категория EpinBy: category_id, category_name, category_match (часть названия)
+    или та же, что у основного пакета UC (PUBG)."""
     if product.get("category_id"):
         return int(product["category_id"])
+    if product.get("category_match") and not product.get("category_name"):
+        found = _ep_category_candidates(product)
+        want = str(product["category_match"]).strip().lower()
+        exact = [cid for cid, name in found.items() if name.lower() == want]
+        if len(exact) == 1:
+            return exact[0]
+        # несколько похожих категорий (например, разные регионы) — не угадываем
+        return next(iter(found)) if len(found) == 1 else 0
     if product.get("category_name"):
         want = str(product["category_name"]).strip().lower()
         for it in _ep_topups():
@@ -1096,7 +1118,7 @@ def _ep_find(product, name):
         if _ep_clean(k) == _ep_clean(name):
             want = _ep_clean(v)
     found = [it for it in _ep_topups() if _ep_clean(it.get("name")) == want]
-    if product.get("category_name") or product.get("category_id"):
+    if product.get("category_name") or product.get("category_id") or product.get("category_match"):
         # категория задана явно — только она (у разных игр бывают одинаковые названия, например «100»)
         cat = _ep_category(product)
         found = [it for it in found if cat and int(it.get("category_id") or 0) == cat]
@@ -1120,8 +1142,37 @@ def _mix_dry(product):
     return DRY_RUN or os.getenv(env, default).strip().lower() not in ("0", "off", "false", "no")
 
 
+def _ep_auto_packs(product):
+    """Пакеты валюты прямо из каталога EpinBy: «100 + 5 Gold» -> 105.
+    Берутся товары категории, где есть одно из слов "words" и нет слов "exclude"."""
+    rule = product.get("auto_amount_packs") or {}
+    words = [w.lower() for w in rule.get("words") or []]
+    exclude = [w.lower() for w in rule.get("exclude") or []]
+    cat = _ep_category(product)
+    if not cat:
+        return {}
+    result = {}
+    for it in _ep_topups():
+        if int(it.get("category_id") or 0) != cat:
+            continue
+        name = _ep_clean(it.get("name"))
+        if words and not any(w in name for w in words):
+            continue
+        if any(w in name for w in exclude):
+            continue
+        amount = _parse_number(name)
+        if not amount:
+            continue
+        old = result.get(amount)
+        if old is None or float(it.get("price") or 0) < float(old.get("price") or 0):
+            result[amount] = it
+    return result
+
+
 def _ep_amount_packs(product):
     """{сколько получает покупатель: товар EpinBy} для пакетов валюты в категории товара."""
+    if product.get("auto_amount_packs"):
+        return _ep_auto_packs(product)
     result = {}
     for amount, name in (product.get("amount_packs") or {}).items():
         item, err = _ep_find(product, name)
@@ -1148,7 +1199,25 @@ def _mix_startup_report():
         if p.get("category_name") and not cat:
             lines.append(f"  ❗ категория «{p['category_name']}» не найдена в EpinBy")
             continue
-        if p.get("amount_packs"):
+        if p.get("category_match") and not cat:
+            found = _ep_category_candidates(p)
+            if found:
+                lines.append(f"  ❗ несколько похожих категорий: {', '.join(f'{n} ({i})' for i, n in found.items())}. "
+                             f"Укажите нужную в category_id")
+            else:
+                lines.append(f"  ❗ категория с «{p['category_match']}» в названии не найдена в EpinBy")
+            continue
+        if p.get("category_match"):
+            names = sorted(str(it.get("name")) for it in _ep_topups() if int(it.get("category_id") or 0) == cat)
+            lines.append(f"  товары EpinBy: {'; '.join(names)[:900]}")
+        if p.get("auto_amount_packs"):
+            have = _ep_amount_packs(p)
+            lines.append(f"  пакеты: {', '.join(str(a) for a in sorted(have)) or '❗ не найдены'}")
+            lost = [str(a) for a in p.get("check_amounts") or []
+                    if not g2bulk.split(int(a), {q: float(it.get("price") or 0) for q, it in have.items()})]
+            if lost:
+                lines.append(f"  ❗ нельзя собрать: {', '.join(lost)}")
+        elif p.get("amount_packs"):
             have = _ep_amount_packs(p)
             lost = [str(a) for a in p["amount_packs"] if int(a) not in have]
             lines.append(f"  пакеты: {', '.join(str(a) for a in sorted(have)) or 'нет'}"
@@ -1176,7 +1245,7 @@ def _mix_plan(product, options, id_name):
             plan.append({"label": str(item.get("name")), "ids": [int(item["id"])],
                          "price": float(item.get("price") or 0)})
             continue
-        if product.get("amount_packs"):
+        if product.get("amount_packs") or product.get("auto_amount_packs"):
             amount = _parse_number(value)
             if amount:
                 packs = _ep_amount_packs(product)
@@ -1185,6 +1254,8 @@ def _mix_plan(product, options, id_name):
                 if amount not in packs and amount in base:
                     amount = base[amount]   # «500 облигаций» = пакет 500 (+10 бонус)
                 sizes = g2bulk.split(amount, {q: float(it.get("price") or 0) for q, it in packs.items()})
+                if not packs:
+                    raise _Manual("пакеты не найдены в каталоге EpinBy")
                 if not sizes:
                     raise _Manual(f"{amount} нельзя собрать из пакетов EpinBy ({', '.join(map(str, sorted(packs)))})")
                 unit = product.get("unit_title", "")

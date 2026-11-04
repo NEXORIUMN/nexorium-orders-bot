@@ -120,22 +120,37 @@
       }
     },
     "103750688": {
-      "title": "Blood Strike пропуска",
-      "kind": "g2bulk",
-      "game": "bloodstrike",
-      "mode": "catalogue",
-      "item_option": "желаемый товар",
-      "id_option": "user id"
+      "kind": "epinby_mix",
+      "category_match": "blood strike",
+      "id_option": "user id",
+      "dry_run_env": "BLOODSTRIKE_DRY_RUN",
+      "dry_run_default": "1",
+      "aliases": {},
+      "_comment": "Blood Strike пропуска через EpinBy (раньше G2Bulk). Вариант на GGSel должен совпадать с названием товара EpinBy; если нет — добавьте в aliases: \"как на GGSel\": \"как в EpinBy\".",
+      "title": "Blood Strike пропуска"
     },
     "103750437": {
-      "title": "Blood Strike золото",
-      "kind": "g2bulk",
-      "game": "bloodstrike",
-      "unit": "",
-      "unit_title": "золота",
-      "item_option": "желаемый товар",
+      "kind": "epinby_mix",
+      "category_match": "blood strike",
       "id_option": "user id",
-      "extra_option": "пропуск",
+      "dry_run_env": "BLOODSTRIKE_DRY_RUN",
+      "dry_run_default": "1",
+      "aliases": {},
+      "_comment": "Blood Strike золото через EpinBy (раньше G2Bulk). Пакеты берутся из каталога EpinBy по числу в названии (100 + 5 Gold = 105). Поле «Нужен пропуск?» — отдельная покупка по названию.",
+      "title": "Blood Strike золото",
+      "unit_title": "золота",
+      "auto_amount_packs": {
+        "words": [
+          "gold",
+          "золот"
+        ],
+        "exclude": [
+          "pass",
+          "пропуск",
+          "card",
+          "карт"
+        ]
+      },
       "check_amounts": [
         51,
         105,

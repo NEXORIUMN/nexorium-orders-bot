@@ -307,11 +307,11 @@ def split_uc(amount, packs):
         for s in sizes:
             u = s // step
             if u <= i and best[i - u][0] < INF:
-                cand = (best[i - u][0] + packs[s], best[i - u][1] + 1)
+                cand = (best[i - u][0] + packs[s] + g2bulk.PACK_PENALTY, best[i - u][1] + 1)
                 if cand < best[i]:
                     best[i] = cand
                     choice[i] = s
-    if best[n][0] == INF:
+    if best[n][0] == INF or best[n][1] > g2bulk.MAX_PACKS:
         return None
     result, i = [], n
     while i > 0:
@@ -524,7 +524,11 @@ def _g2_pubg_game(fresh=False):
             continue
         found.append((str(code), name))
     _g2_pubg_cache["found"] = found
-    _g2_pubg_cache["game"] = found[0][0] if len(found) == 1 else None
+    exact = [c for c, n in found if re.sub(r"\s+", " ", n).strip().lower() == "pubg mobile"]
+    if len(exact) == 1:
+        _g2_pubg_cache["game"] = exact[0]      # «PUBG Mobile», а не «PUBG Mobile Instant»
+    else:
+        _g2_pubg_cache["game"] = found[0][0] if len(found) == 1 else None
     return _g2_pubg_cache["game"]
 
 
@@ -1287,6 +1291,9 @@ def _ep_find(product, name):
         cat = _ep_category(product)
         found = [it for it in found if cat and int(it.get("category_id") or 0) == cat]
     if not found:
+        item = _ep_find_words(product, want)
+        if item:
+            return item, None
         return None, f"«{_PRICE_TAIL.sub('', str(name)).strip()}» нет в каталоге EpinBy"
     cat = _ep_category(product)
     same = [it for it in found if cat and int(it.get("category_id") or 0) == cat]
@@ -1296,6 +1303,45 @@ def _ep_find(product, name):
         return found[0], None
     cats = ", ".join(sorted({str(it.get("category")) for it in found}))
     return None, f"«{name}» есть в нескольких категориях EpinBy ({cats}), укажите category_id"
+
+
+_RU_EN = {"элит": "elite", "премиум": "premium", "пропуск": "pass", "сезон": "season",
+          "уров": "level", "боев": "battle", "золот": "gold"}
+
+
+def _words(text):
+    words = set()
+    for w in re.findall(r"[a-zа-я0-9]+", _ep_clean(text).replace("ё", "е")):
+        for ru, en in _RU_EN.items():
+            if w.startswith(ru):
+                w = en
+        words.add(w)
+    return words
+
+
+def _ep_find_words(product, want):
+    """
+    Поиск по набору слов в категории товара: «Elite Strike Pass» = «Strike Pass Elite»,
+    «Premium Pass» -> «Strike Pass Premium». Только если подходит ровно один товар.
+    """
+    cat = _ep_category(product)
+    if not cat:
+        return None
+    w = _words(want)
+    if not w or not (w - {"pass", "pack", "the", "of"}):
+        return None
+    items = [(it, _words(it.get("name"))) for it in _ep_topups() if int(it.get("category_id") or 0) == cat]
+    hits = [it for it, iw in items if w <= iw]
+    if len(hits) == 1:
+        return hits[0]
+    # название у покупателя длиннее («Strike Pass Elite 30 дней»): товар, все слова которого есть в заказе
+    hits = [(len(iw), it) for it, iw in items if iw and iw <= w and (iw - {"pass", "pack"})]
+    if hits:
+        best = max(n for n, _ in hits)
+        top = [it for n, it in hits if n == best]
+        if len(top) == 1:
+            return top[0]
+    return None
 
 
 def _mix_dry(product):
@@ -1351,7 +1397,9 @@ def _mix_startup_report():
     if not items or not EPINBY_KEY:
         return ""
     lines = ["EpinBy наборы:"]
+    blocks, shown_cats = {}, set()
     for gid, p in items:
+        start = len(lines)
         title = p.get("title", gid) + (" (🧪 тест)" if _mix_dry(p) else " (🟢 боевой)")
         try:
             cat = _ep_category(p)
@@ -1371,7 +1419,8 @@ def _mix_startup_report():
             else:
                 lines.append(f"  ❗ категория с «{p['category_match']}» в названии не найдена в EpinBy")
             continue
-        if p.get("category_match"):
+        if p.get("category_match") and cat not in shown_cats:
+            shown_cats.add(cat)
             names = sorted(str(it.get("name")) for it in _ep_topups() if int(it.get("category_id") or 0) == cat)
             lines.append(f"  товары EpinBy: {'; '.join(names)[:900]}")
         if p.get("auto_amount_packs"):
@@ -1391,7 +1440,21 @@ def _mix_startup_report():
             lines.append(f"  ❗ не найдены: {', '.join(missing)}")
         elif p.get("check_names"):
             lines.append(f"  проверено названий: {len(p['check_names'])}, все найдены")
-    return "\n".join(lines)
+        block = "\n".join(lines[start:])
+        if block in blocks:
+            del lines[start:]
+            blocks[block] += 1
+        else:
+            blocks[block] = 1
+    out = []
+    for line in lines:
+        out.append(line)
+    text = "\n".join(out)
+    for block, n in blocks.items():
+        if n > 1:
+            first, _, rest = block.partition("\n")
+            text = text.replace(block, f"{first} — ×{n} товаров GGSel" + ("\n" + rest if rest else ""), 1)
+    return text
 
 
 def _mix_plan(product, options, id_name):

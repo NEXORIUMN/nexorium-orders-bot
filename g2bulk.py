@@ -31,6 +31,8 @@ _NS = uuid.UUID("6f1c2b8e-3d4a-5b6c-8d9e-0a1b2c3d4e5f")
 
 _catalogue_cache = {}   # game -> (время, список)
 CATALOGUE_TTL = 60      # секунд
+PACK_PENALTY = 0.01     # $ за пакет при выборе комбинации
+MAX_PACKS = 30          # больше пакетов в одном заказе — на ручную выдачу
 
 
 class G2Error(Exception):
@@ -209,11 +211,12 @@ def split(amount, packs):
         for s in sizes:
             u = s // step
             if u <= i and best[i - u][0] < INF:
-                cand = (best[i - u][0] + packs[s], best[i - u][1] + 1)
+                # +1 цент за каждый пакет: при почти равной цене берём меньше пакетов
+                cand = (best[i - u][0] + packs[s] + PACK_PENALTY, best[i - u][1] + 1)
                 if cand < best[i]:
                     best[i] = cand
                     choice[i] = s
-    if best[n][0] == INF:
+    if best[n][0] == INF or best[n][1] > MAX_PACKS:
         return None
     result, i = [], n
     while i > 0:

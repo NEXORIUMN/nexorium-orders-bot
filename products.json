@@ -42,6 +42,27 @@
       ]
     }
   },
+  "title_rules": [
+    {
+      "_comment": "Карточки, которых нет в ggsel_products, по названию. Наборы/акции PUBG Mobile — как 102795880.",
+      "all": [
+        "набор|акци|pack",
+        "pubg|пабг|пубг"
+      ],
+      "none": [
+        "battlegrounds",
+        " pc",
+        "пк",
+        "steam",
+        "g-coin",
+        "kr ",
+        "корея",
+        "вьетнам",
+        "lite"
+      ],
+      "use": "102795880"
+    }
+  ],
   "ggsel_products": {
     "102610137": {
       "title": "PUBG Mobile UC по ID (Global)",
@@ -166,7 +187,7 @@
       "_comment": "PUBG: наборы, Prime, Elite Pass и UC через EpinBy. Каждая выбранная опция (кроме ID) — отдельная покупка. Название варианта на GGSel должно совпадать с названием товара в EpinBy (без смайлов и цены). Если отличается — добавьте в aliases: \"как на GGSel\": \"как в EpinBy\". Варианты 'нет' пропускаются. UC пишутся как '660 UC'.",
       "title": "PUBG наборы и Prime",
       "kind": "epinby_mix",
-      "id_option": "свой id",
+      "id_option": "свой id|твой id|id игрока|ваш id",
       "aliases": {},
       "check_names": [
         "First Purchase Pack",

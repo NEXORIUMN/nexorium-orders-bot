@@ -264,10 +264,15 @@ def _options(info):
     return result
 
 
+def _option_name_match(name, keyword):
+    """keyword может содержать варианты через «|»: "свой id|твой id"."""
+    low = str(name).lower()
+    return any(k.strip() and k.strip() in low for k in str(keyword).lower().split("|"))
+
+
 def _find_option(options, keyword):
-    kw = keyword.lower()
     for name, value in options:
-        if kw in name.lower():
+        if _option_name_match(name, keyword):
             return value
     return None
 
@@ -326,9 +331,18 @@ def start(sale, info, invoice_id, product_id):
     """Вызывается из main.py для каждого нового заказа. Возвращает True, если заказ взят в работу."""
     if not is_on():
         return False
-    product = _config.get("ggsel_products", {}).get(str(product_id))
+    prod = (sale or {}).get("product") or {}
+    sale_name = str(prod.get("name") or (sale or {}).get("name") or (info or {}).get("name") or "")
+    key = str(product_id)
+    product = _config.get("ggsel_products", {}).get(key)
     if not product:
-        return False
+        key = _match_by_title(sale_name)
+        if not key:
+            return False
+        product = _config["ggsel_products"][key]
+        if not _get_record(invoice_id):
+            _notify(f"ℹ️ Карточка {product_id} («{sale_name[:80]}») нет в настройках — "
+                    f"выдаю как «{product.get('title', key)}» (по названию).")
     needs_g2 = product.get("kind") == "g2bulk"
     if (needs_g2 and not g2bulk.KEY) or (not needs_g2 and not EPINBY_KEY):
         _notify(f"⚠️ Заказ {invoice_id}: нет ключа поставщика для «{product.get('title', '')}», "
@@ -336,13 +350,30 @@ def start(sale, info, invoice_id, product_id):
         return False
     if _get_record(invoice_id):
         return True  # уже обрабатывали
-    _set_status(invoice_id, status="new", product_id=str(product_id))
+    _set_status(invoice_id, status="new", product_id=str(product_id), config_key=key)
     info = dict(info or {})
-    prod = (sale or {}).get("product") or {}
-    info["_product_name"] = str(prod.get("name") or (sale or {}).get("name") or info.get("name") or "")
+    info["_product_name"] = sale_name
     t = threading.Thread(target=_deliver_safe, args=(invoice_id, product, info), daemon=True)
     t.start()
     return True
+
+
+def _match_by_title(name):
+    """
+    Карточка, которой нет в настройках, по названию: правила title_rules в products.json —
+    {"all": [слова, варианты через |], "none": [слова], "use": номер карточки-образца}.
+    """
+    low = str(name or "").lower().replace("ё", "е")
+    if not low:
+        return None
+    for rule in _config.get("title_rules") or []:
+        if not all(any(w in low for w in str(part).lower().split("|")) for part in rule.get("all") or []):
+            continue
+        if any(w.lower() in low for w in rule.get("none") or []):
+            continue
+        if str(rule.get("use")) in _config.get("ggsel_products", {}):
+            return str(rule["use"])
+    return None
 
 
 def _resume_unfinished():
@@ -352,7 +383,7 @@ def _resume_unfinished():
     for inv, rec in state.items():
         if rec.get("status") in ("new", "in_progress") and rec.get("plan"):
             print("Автовыдача: продолжаю заказ", inv)
-            product = _config.get("ggsel_products", {}).get(rec.get("product_id", ""))
+            product = _config.get("ggsel_products", {}).get(rec.get("config_key") or rec.get("product_id", ""))
             if product:
                 threading.Thread(target=_deliver_safe, args=(inv, product, None, rec),
                                  daemon=True).start()
@@ -1526,7 +1557,7 @@ def _deliver_mix(invoice_id, product, info, resume=None):
         player_id, plan = resume["player_id"], resume["plan"]
     else:
         options = _options(info or {})
-        id_name = next((n for n, _ in options if product["id_option"].lower() in n.lower()), None)
+        id_name = next((n for n, _ in options if _option_name_match(n, product["id_option"])), None)
         player_id = parse_player_id(dict(options).get(id_name)) if id_name else None
         try:
             cnt = float(str((info or {}).get("cnt_goods") or 1).replace(",", "."))

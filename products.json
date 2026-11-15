@@ -144,7 +144,10 @@
       "dry_run_default": "0",
       "aliases": {},
       "_comment": "Blood Strike пропуска через EpinBy (раньше G2Bulk). Вариант на GGSel должен совпадать с названием товара EpinBy; если нет — добавьте в aliases: \"как на GGSel\": \"как в EpinBy\".",
-      "title": "Blood Strike пропуска"
+      "title": "Blood Strike пропуска",
+      "g2_fallback": {
+        "game": "bloodstrike"
+      }
     },
     "103750437": {
       "kind": "epinby_mix",
@@ -181,7 +184,10 @@
         2260,
         5800,
         23200
-      ]
+      ],
+      "g2_fallback": {
+        "game": "bloodstrike"
+      }
     },
     "102795880": {
       "_comment": "PUBG: наборы, Prime, Elite Pass и UC через EpinBy. Каждая выбранная опция (кроме ID) — отдельная покупка. Название варианта на GGSel должно совпадать с названием товара в EpinBy (без смайлов и цены). Если отличается — добавьте в aliases: \"как на GGSel\": \"как в EpinBy\". Варианты 'нет' пропускаются. UC пишутся как '660 UC'.",
@@ -207,7 +213,10 @@
         "Weekly Deal Pack 2"
       ],
       "dry_run_env": "PACKS_DRY_RUN",
-      "dry_run_default": "0"
+      "dry_run_default": "0",
+      "g2_fallback": {
+        "match": "pubg mobile"
+      }
     },
     "103135767": {
       "title": "Arena Breakout: Infinity",
@@ -238,7 +247,10 @@
         "Premium Battle Pass Activation Card",
         "Advanced Battle Pass Activation Card"
       ],
-      "dry_run_default": "0"
+      "dry_run_default": "0",
+      "g2_fallback": {
+        "match": "arena breakout"
+      }
     },
     "103135733": {
       "title": "Arena Breakout: Infinity",
@@ -269,7 +281,10 @@
         "Premium Battle Pass Activation Card",
         "Advanced Battle Pass Activation Card"
       ],
-      "dry_run_default": "0"
+      "dry_run_default": "0",
+      "g2_fallback": {
+        "match": "arena breakout"
+      }
     },
     "102900310": {
       "title": "Arena Breakout: Infinity",
@@ -300,7 +315,10 @@
         "Premium Battle Pass Activation Card",
         "Advanced Battle Pass Activation Card"
       ],
-      "dry_run_default": "0"
+      "dry_run_default": "0",
+      "g2_fallback": {
+        "match": "arena breakout"
+      }
     },
     "102900307": {
       "title": "Arena Breakout: Infinity",
@@ -331,7 +349,10 @@
         "Premium Battle Pass Activation Card",
         "Advanced Battle Pass Activation Card"
       ],
-      "dry_run_default": "0"
+      "dry_run_default": "0",
+      "g2_fallback": {
+        "match": "arena breakout"
+      }
     },
     "102900305": {
       "title": "Arena Breakout: Infinity",
@@ -362,7 +383,10 @@
         "Premium Battle Pass Activation Card",
         "Advanced Battle Pass Activation Card"
       ],
-      "dry_run_default": "0"
+      "dry_run_default": "0",
+      "g2_fallback": {
+        "match": "arena breakout"
+      }
     },
     "102900303": {
       "title": "Arena Breakout: Infinity",
@@ -393,7 +417,10 @@
         "Premium Battle Pass Activation Card",
         "Advanced Battle Pass Activation Card"
       ],
-      "dry_run_default": "0"
+      "dry_run_default": "0",
+      "g2_fallback": {
+        "match": "arena breakout"
+      }
     },
     "102900297": {
       "title": "Arena Breakout: Infinity",
@@ -424,7 +451,10 @@
         "Premium Battle Pass Activation Card",
         "Advanced Battle Pass Activation Card"
       ],
-      "dry_run_default": "0"
+      "dry_run_default": "0",
+      "g2_fallback": {
+        "match": "arena breakout"
+      }
     },
     "102900281": {
       "title": "Arena Breakout: Infinity",
@@ -455,7 +485,10 @@
         "Premium Battle Pass Activation Card",
         "Advanced Battle Pass Activation Card"
       ],
-      "dry_run_default": "0"
+      "dry_run_default": "0",
+      "g2_fallback": {
+        "match": "arena breakout"
+      }
     },
     "102900099": {
       "title": "Arena Breakout: Infinity",
@@ -486,7 +519,10 @@
         "Premium Battle Pass Activation Card",
         "Advanced Battle Pass Activation Card"
       ],
-      "dry_run_default": "0"
+      "dry_run_default": "0",
+      "g2_fallback": {
+        "match": "arena breakout"
+      }
     },
     "_arena_help": {
       "_comment": "Arena Breakout: Infinity (EpinBy, категория Arena Breakout Infinite). Пропуска по названию (aliases), облигации по количеству из опции или из названия товара. Тестовый режим: ARENA_DRY_RUN=1."

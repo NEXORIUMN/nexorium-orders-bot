@@ -56,6 +56,9 @@ PRODUCTS_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "produc
 
 LOW_BALANCE = float(os.getenv("LOW_BALANCE", "20") or 20)  # предупреждать, если баланс ниже ($)
 G2_DRY_RUN = DRY_RUN or os.getenv("G2BULK_DRY_RUN", "1").strip().lower() not in ("0", "off", "false", "no")
+# Запасной поставщик для PUBG UC: если EpinBy пакет точно не выдал — покупаем его в G2Bulk
+G2_UC_FALLBACK = os.getenv("G2BULK_UC_FALLBACK", "on").strip().lower() not in ("0", "off", "false", "no")
+G2_PUBG_GAME = os.getenv("G2BULK_PUBG_GAME", "").strip()   # код игры в G2Bulk; пусто — найти самому
 BUYER_ERROR_MESSAGES = os.getenv("BUYER_ERROR_MESSAGES", "off").strip().lower() in ("on", "1", "true", "yes")
 # новые товары EpinBy (наборы, Prime, Elite Pass): отдельный тестовый режим
 MIX_DRY_RUN = DRY_RUN or os.getenv("PACKS_DRY_RUN", "1").strip().lower() not in ("0", "off", "false", "no")
@@ -163,6 +166,12 @@ def setup(notify, send_chat, hide):
     if report:
         text += "\n\n" + report
     report = _g2_startup_report()
+    if report:
+        text += "\n\n" + report
+    try:
+        report = _uc_fallback_report()
+    except Exception as e:
+        report = f"⚠️ Запасной G2Bulk для UC: проверка не удалась ({_hide(e)[:120]})"
     if report:
         text += "\n\n" + report
     notify(text)
@@ -419,10 +428,13 @@ def _deliver(invoice_id, product, info, resume=None):
 
     _set_status(invoice_id, status="in_progress")
     done = []
+    via_g2 = []
     for idx, size in enumerate(plan):
-        ok, used_id, err = _buy_pack(invoice_id, idx, size, player_id)
+        ok, err, via = _buy_uc_part(invoice_id, idx, size, _config["uc_packs"][str(size)]["ids"], player_id)
         if ok:
             done.append(size)
+            if via == "G2Bulk":
+                via_g2.append(size)
             continue
         _set_status(invoice_id, status="manual", error=err, done=done)
         rest = plan[idx:]
@@ -435,8 +447,147 @@ def _deliver(invoice_id, product, info, resume=None):
 
     _set_status(invoice_id, status="done", done=done)
     _send_chat(invoice_id, MSG_DONE)
+    g2_note = f"\n🔁 Через G2Bulk: {' + '.join(map(str, via_g2))} UC" if via_g2 else ""
     _notify(f"✅ Заказ {invoice_id} выдан автоматически: {amount} UC ({plan_text}) → {who}."
-            + _balance_line())
+            + g2_note + _balance_line() + (_g2_balance_line() if via_g2 else ""))
+
+
+def _uc_parts(invoice_id):
+    return dict((_get_record(invoice_id) or {}).get("uc_parts") or {})
+
+
+def _set_uc_part(invoice_id, idx, value):
+    with _lock:
+        state = _load_state()
+        rec = state.get(invoice_id, {"ts": time.time()})
+        parts = dict(rec.get("uc_parts") or {})
+        parts[str(idx)] = value
+        rec["uc_parts"] = parts
+        state[invoice_id] = rec
+        _save_state(state)
+
+
+def _buy_uc_part(invoice_id, idx, size, ids, player_id):
+    """
+    Один пакет UC: сначала EpinBy (основной и запасные товары), а если EpinBy его
+    ТОЧНО не выдал — G2Bulk. -> (успех, ошибка, у кого куплено)
+
+    Защита от дублей:
+      * в G2Bulk идём только при «точно не выдано» (отказ или FAILED по всем товарам EpinBy);
+      * перед G2Bulk пакет помечается в состоянии ("g2"), поэтому после перезапуска бота
+        EpinBy по этому пакету больше не вызывается;
+      * в G2Bulk покупка подписана номером заказа и части, повтор находит прежний заказ.
+    """
+    mark = _uc_parts(invoice_id).get(str(idx))
+    if mark == "ep_done":
+        return True, None, "EpinBy"
+    if mark == "g2_done":
+        return True, None, "G2Bulk"
+    if mark != "g2":
+        ok, _, err, definitive = _buy_ids_ex(invoice_id, idx, f"{size} UC", ids, player_id)
+        if ok:
+            _set_uc_part(invoice_id, idx, "ep_done")
+            return True, None, "EpinBy"
+        if not definitive:
+            return False, err, None
+        if not (G2_UC_FALLBACK and g2bulk.KEY):
+            return False, err, None
+        if G2_DRY_RUN:
+            return False, err + " (G2Bulk не пробовал: тестовый режим G2BULK_DRY_RUN=1)", None
+        ep_err = err
+        _set_uc_part(invoice_id, idx, "g2")      # дальше — только G2Bulk, EpinBy больше не трогаем
+        _notify(f"ℹ️ Заказ {invoice_id}: {size} UC в EpinBy не прошёл, беру в G2Bulk.\n{ep_err}")
+    ok, err = _g2_uc_buy(invoice_id, idx, size, player_id)
+    if ok:
+        _set_uc_part(invoice_id, idx, "g2_done")
+        return True, None, "G2Bulk"
+    return False, f"EpinBy не выдал, G2Bulk: {err}", None
+
+
+def _g2_pubg_game(fresh=False):
+    """Код PUBG Mobile (глобальной версии) в G2Bulk."""
+    if G2_PUBG_GAME:
+        return G2_PUBG_GAME
+    if _g2_pubg_cache.get("game") and not fresh:
+        return _g2_pubg_cache["game"]
+    found = []
+    for g in g2bulk.games():
+        if isinstance(g, dict):
+            code = g.get("code") or g.get("slug") or g.get("game") or g.get("id")
+            name = str(g.get("name") or g.get("title") or code or "")
+        else:
+            code = name = str(g)
+        text = f"{name} {code}".lower().replace("_", " ").replace("-", " ")
+        if "pubg" not in text or not re.search(r"mobile|\bm\b|pubgm", text):
+            continue
+        if re.search(r"\bkr\b|korea|vietnam|\bvn\b|\bvng\b|india|bgmi|lite|\btw\b|taiwan|japan|\bjp\b|\bcn\b|china", text):
+            continue
+        found.append((str(code), name))
+    _g2_pubg_cache["found"] = found
+    _g2_pubg_cache["game"] = found[0][0] if len(found) == 1 else None
+    return _g2_pubg_cache["game"]
+
+
+_g2_pubg_cache = {}
+
+
+def _g2_uc_buy(invoice_id, idx, size, player_id):
+    """Покупает size UC в G2Bulk (одним или несколькими пакетами). -> (успех, ошибка)"""
+    try:
+        game = _g2_pubg_game()
+    except Exception as e:
+        return False, f"список игр не получен ({_hide(e)[:120]})"
+    if not game:
+        return False, "PUBG Mobile не найден однозначно — задайте G2BULK_PUBG_GAME"
+    try:
+        packs = g2bulk.denominations(game, "UC")
+    except Exception as e:
+        return False, f"каталог не получен ({_hide(e)[:120]})"
+    sizes = g2bulk.split(int(size), {q: p for q, (_, p) in packs.items()})
+    if not sizes:
+        return False, f"{size} UC нельзя собрать из пакетов G2Bulk ({', '.join(map(str, sorted(packs))) or 'нет пакетов'})"
+    given = []
+    for j, s in enumerate(sizes):
+        ok, err, _ = _g2_buy_one(invoice_id, f"uc{idx}-{j}", game, packs[s][0], player_id, None)
+        if not ok:
+            if given:
+                err += f" (из этого пакета в G2Bulk уже выдано: {' + '.join(map(str, given))} UC)"
+            return False, err
+        given.append(s)
+    return True, None
+
+
+def _uc_fallback_report():
+    if not (G2_UC_FALLBACK and g2bulk.KEY and EPINBY_KEY):
+        return ""
+    lines = []
+    # товары UC из настроек, которых больше нет в каталоге EpinBy
+    try:
+        have = {int(it.get("id") or 0) for it in _ep_topups()}
+        lost = [f"{pid} ({k} UC)" for k, v in _config.get("uc_packs", {}).items()
+                if not k.startswith("_") for pid in v.get("ids", []) if have and int(pid) not in have]
+        if lost:
+            lines.append(f"❗ Товаров UC нет в каталоге EpinBy (сняты?): {', '.join(lost)}")
+    except Exception:
+        pass
+    mode = " (тест: G2BULK_DRY_RUN=1, не покупает)" if G2_DRY_RUN else ""
+    try:
+        game = _g2_pubg_game(fresh=True)
+    except Exception as e:
+        return "\n".join([f"⚠️ Запасной G2Bulk для UC: список игр не получен ({_hide(e)[:120]})"] + lines)
+    if not game:
+        found = _g2_pubg_cache.get("found") or []
+        what = ("несколько похожих: " + ", ".join(f"{n} ({c})" for c, n in found)) if found else "PUBG Mobile не найден"
+        return "\n".join([f"⚠️ Запасной G2Bulk для UC выключен: {what}. Задайте G2BULK_PUBG_GAME."] + lines)
+    try:
+        packs = g2bulk.denominations(game, "UC")
+        miss = [k for k in _config.get("uc_packs", {}) if not k.startswith("_")
+                and not g2bulk.split(int(k), {q: p for q, (_, p) in packs.items()})]
+        lines.insert(0, f"🔁 Запасной G2Bulk для UC{mode}: игра {game}, пакеты {', '.join(map(str, sorted(packs))) or '❗ нет'}"
+                     + (f"\n❗ нельзя собрать в G2Bulk: {', '.join(miss)}" if miss else ""))
+    except Exception as e:
+        lines.insert(0, f"⚠️ Запасной G2Bulk для UC: каталог {game} не получен ({_hide(e)[:120]})")
+    return "\n".join(lines)
 
 
 def _buy_pack(invoice_id, idx, size, player_id):
@@ -446,8 +597,19 @@ def _buy_pack(invoice_id, idx, size, player_id):
 
 def _buy_ids(invoice_id, idx, label, ids, player_id):
     """Покупает одну часть заказа в EpinBy, перебирая основной и запасные товары."""
+    return _buy_ids_ex(invoice_id, idx, label, ids, player_id)[:3]
+
+
+def _buy_ids_ex(invoice_id, idx, label, ids, player_id):
+    """
+    -> (успех, product_id, ошибка, точно_не_выдано).
+    точно_не_выдано = True, только если по каждому товару EpinBy сразу отказал
+    или заказ закончился FAILED/CANCELED. При обрыве сети или долгом выполнении — False:
+    заказ мог пройти, и брать товар у другого поставщика нельзя (будет дубль).
+    """
     size = label
     last_err = "нет товаров"
+    errors = []
     for pid in ids:
         key = f"ggsel-{invoice_id}-{idx}-{pid}"
         body = {"product_id": pid, "qty": 1, "player_id": player_id}
@@ -459,7 +621,7 @@ def _buy_ids(invoice_id, idx, label, ids, player_id):
             except EpinbyError as e:
                 if e.code == "INSUFFICIENT_FUNDS":
                     _notify("💸 На балансе EpinBy не хватает денег! Пополните баланс.")
-                    return False, pid, "мало денег на балансе EpinBy"
+                    return False, pid, "; ".join(errors + ["мало денег на балансе EpinBy"]), True
                 last_err = f"{size} (товар {pid}): {e.code} {e.message}"
                 break
             except Exception as e:
@@ -469,20 +631,22 @@ def _buy_ids(invoice_id, idx, label, ids, player_id):
         if order is None:
             if "сеть" in last_err:
                 # не знаем, создан ли заказ - запасной брать нельзя, иначе возможна двойная выдача
-                return False, pid, last_err
+                return False, pid, last_err, False
+            errors.append(last_err)
             print(f"Заказ {invoice_id}: {last_err}, пробую запасной")
             continue
 
         status = _wait_order(order.get("order_id"), order.get("status"))
         if status == "COMPLETED":
             print(f"Заказ {invoice_id}: {size} выдано (товар {pid}, EpinBy #{order.get('order_id')})")
-            return True, pid, None
+            return True, pid, None, False
         last_err = f"{size} (товар {pid}, EpinBy #{order.get('order_id')}): статус {status}"
-        if status == "TIMEOUT":
-            # заказ ещё может выполниться - запасной не берём, чтобы не выдать дважды
-            return False, pid, last_err + " (долго выполняется, проверьте в EpinBy)"
+        if status not in ("FAILED", "CANCELED"):
+            # TIMEOUT и прочее: заказ ещё может выполниться - запасной не берём, чтобы не выдать дважды
+            return False, pid, last_err + " (долго выполняется, проверьте в EpinBy)", False
+        errors.append(last_err)
         print(f"Заказ {invoice_id}: {last_err}, пробую запасной")
-    return False, None, last_err
+    return False, None, "; ".join(errors) or last_err, True
 
 
 def _wait_order(order_id, status):
@@ -1242,8 +1406,15 @@ def _mix_plan(product, options, id_name):
             continue
         item, err = _ep_find(product, value)
         if item:
-            plan.append({"label": str(item.get("name")), "ids": [int(item["id"])],
-                         "price": float(item.get("price") or 0)})
+            m = _UC_RE.match(_ep_clean(item.get("name")))
+            size = int(re.sub(r"\s", "", m.group(1))) if m else 0
+            if size and str(size) in _config.get("uc_packs", {}):
+                # обычный пакет UC: основной и запасные товары, а при отказе EpinBy — G2Bulk
+                plan.append({"label": f"{size} UC", "ids": _config["uc_packs"][str(size)]["ids"],
+                             "price": float(item.get("price") or 0), "uc": size})
+            else:
+                plan.append({"label": str(item.get("name")), "ids": [int(item["id"])],
+                             "price": float(item.get("price") or 0)})
             continue
         if product.get("amount_packs") or product.get("auto_amount_packs"):
             amount = _parse_number(value)
@@ -1273,7 +1444,7 @@ def _mix_plan(product, options, id_name):
                 raise _Manual(f"{amount} UC нельзя собрать из пакетов")
             for size in sizes:
                 plan.append({"label": f"{size} UC", "ids": _config["uc_packs"][str(size)]["ids"],
-                             "price": packs[size]})
+                             "price": packs[size], "uc": size})
             continue
         raise _Manual(err)
     if not plan and product.get("amount_packs") and product.get("_title"):
@@ -1338,9 +1509,13 @@ def _deliver_mix(invoice_id, product, info, resume=None):
     _set_status(invoice_id, status="in_progress")
     done = []
     for idx, part in enumerate(plan):
-        ok, _, err = _buy_ids(invoice_id, idx, part["label"], part["ids"], player_id)
+        if part.get("uc"):
+            ok, err, via = _buy_uc_part(invoice_id, idx, part["uc"], part["ids"], player_id)
+        else:
+            ok, _, err = _buy_ids(invoice_id, idx, part["label"], part["ids"], player_id)
+            via = None
         if ok:
-            done.append(part["label"])
+            done.append(part["label"] + (" (G2Bulk)" if via == "G2Bulk" else ""))
             continue
         _set_status(invoice_id, status="manual", error=err, done=done)
         _notify(f"❗ Заказ {invoice_id} ({title}): выдача остановилась.\n"

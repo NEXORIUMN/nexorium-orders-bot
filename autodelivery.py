@@ -798,6 +798,9 @@ _UC_NOISE = {"uc", "global", "gl", "pubg", "mobile", "pubgm", "instant", "auto",
 def _g2_uc_name(name):
     """«60 UC», «60 UC Global», «PUBG Mobile 60 UC», «UC 60», «60+6 UC (Instant)» -> 60 / 66; иначе None."""
     text = re.sub(r"\(.*?\)|\[.*?\]", " ", str(name or "")).lower().replace("ю", "u")
+    if re.fullmatch(r"\s*\d[\d,]*(?:\s*\+\s*\d[\d,]*)*\s*", text):
+        # в G2Bulk у PUBG Mobile пакеты UC названы просто числом: «60», «660», «985»
+        return sum(int(x.replace(",", "")) for x in re.findall(r"\d[\d,]*", text))
     if not re.search(r"\buc\b|\d\s*uc\b|\buc\s*\d", text):
         return None
     nums = re.findall(r"\d[\d,]*(?:\s*\+\s*\d[\d,]*)*", text)

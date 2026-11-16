@@ -63,8 +63,15 @@ BUYER_ERROR_MESSAGES = os.getenv("BUYER_ERROR_MESSAGES", "off").strip().lower() 
 # новые товары EpinBy (наборы, Prime, Elite Pass): отдельный тестовый режим
 MIX_DRY_RUN = DRY_RUN or os.getenv("PACKS_DRY_RUN", "1").strip().lower() not in ("0", "off", "false", "no")
 G2_LOW_BALANCE = float(os.getenv("G2BULK_LOW_BALANCE", "20") or 20)
-POLL_EVERY = 15          # секунд между проверками статуса заказа в EpinBy
-POLL_TIMEOUT = 20 * 60   # сколько ждать выполнения одного пакета
+POLL_EVERY = 15          # секунд между проверками статуса (дальше реже: ×4 после 10 мин, ×20 после 2 ч)
+# Ждём окончательного ответа поставщика: заказ «в работе» ещё может выполниться, и брать товар
+# у другого поставщика до ответа нельзя — будет дубль. Только через столько часов сдаёмся.
+POLL_TIMEOUT = float(os.getenv("SUPPLIER_WAIT_HOURS", "24")) * 3600
+WAIT_NOTICE = 20 * 60    # через сколько написать в группу «жду ответа, не выдавайте вручную»
+NET_RETRIES = 20         # повторы создания заказа при обрыве связи (тот же ключ — дубля нет), ~30 мин
+EP_DONE = {"COMPLETED", "SUCCESS", "DELIVERED"}
+EP_FAILED = {"FAILED", "CANCELED", "CANCELLED", "REFUNDED", "REJECTED", "EXPIRED"}
+ALT_PRICE_LIMIT = 1.3    # запасной товар EpinBy из другой категории — не дороже основного на 30%
 
 # Тексты покупателю
 MSG_DONE = (
@@ -529,7 +536,7 @@ def _ep_human(err, definitive):
             what = "товар снят с продажи"
         elif "failed" in low:
             what = "заказ не прошёл"
-        elif "canceled" in low or "cancelled" in low:
+        elif "canceled" in low or "cancelled" in low or "refunded" in low or "rejected" in low or "expired" in low:
             what = "заказ отменён"
         elif "мало денег" in low or "insufficient" in low:
             what = "мало денег на балансе"
@@ -718,6 +725,50 @@ def _g2_part_buy(invoice_id, idx, part, rule, player_id):
     return True, None
 
 
+_ALT_EXCLUDE = re.compile(r"\bkr\b|korea|корея|\bvn\b|vietnam|вьетнам|\btw\b|taiwan|\bjp\b|japan|india|bgmi|"
+                         r"lite|new state|battlegrounds|\bpc\b|voucher|ваучер|\bcode\b|\bкод\b", re.I)
+
+
+def _uc_alternatives(size, ids):
+    """Такой же пакет UC в других категориях EpinBy (PUBG Mobile, не региональные), дешевле — раньше."""
+    try:
+        items = _ep_topups()
+    except Exception:
+        return []
+    by_id = {int(it.get("id") or 0): it for it in items}
+    base = [float(by_id[i].get("price") or 0) for i in ids if i in by_id and by_id[i].get("price")]
+    limit = max(base) * ALT_PRICE_LIMIT if base else None
+    alts = []
+    for it in items:
+        pid = int(it.get("id") or 0)
+        cat = str(it.get("category") or "")
+        if pid in ids or "pubg" not in cat.lower() or _ALT_EXCLUDE.search(cat) or _ALT_EXCLUDE.search(str(it.get("name"))):
+            continue
+        m = _UC_RE.match(_ep_clean(it.get("name")))
+        if not m or int(re.sub(r"\s", "", m.group(1))) != int(size):
+            continue
+        price = float(it.get("price") or 0)
+        if limit is not None and price > limit:
+            continue
+        alts.append((price, pid))
+    return [pid for _, pid in sorted(alts)[:3]]
+
+
+def _part_ids(invoice_id, idx, ids, extra=None):
+    """
+    Список товаров EpinBy для части заказа фиксируется при первой попытке.
+    После перезапуска бот идёт ровно по нему (каталог мог измениться) — так не появится
+    второй заказ у другого товара, пока первый ещё выполняется.
+    """
+    key = f"ids_{idx}"
+    frozen = (_get_record(invoice_id) or {}).get(key)
+    if frozen:
+        return [int(i) for i in frozen]
+    full = list(ids) + [i for i in (extra() if extra else []) if i not in ids]
+    _set_status(invoice_id, **{key: full})
+    return full
+
+
 def _buy_uc_part(invoice_id, idx, size, ids, player_id):
     """
     Один пакет UC: сначала EpinBy (основной и запасные товары), а если EpinBy его
@@ -729,6 +780,7 @@ def _buy_uc_part(invoice_id, idx, size, ids, player_id):
         EpinBy по этому пакету больше не вызывается;
       * в G2Bulk покупка подписана номером заказа и части, повтор находит прежний заказ.
     """
+    ids = _part_ids(invoice_id, idx, ids, lambda: _uc_alternatives(size, ids))
     return _buy_with_fallback(invoice_id, idx, f"{size} UC", ids, player_id,
                               lambda: _g2_uc_buy(invoice_id, idx, size, player_id))
 
@@ -839,6 +891,18 @@ def _uc_fallback_report():
     except Exception:
         pass
     mode = " (тест: G2BULK_DRY_RUN=1, не покупает)" if G2_DRY_RUN else ""
+    try:
+        alts = []
+        for k, v in _config.get("uc_packs", {}).items():
+            if k.startswith("_"):
+                continue
+            found = _uc_alternatives(int(k), v.get("ids", []))
+            if found:
+                alts.append(f"{k}: {', '.join(map(str, found))}")
+        lines.append("🔁 Запасные товары EpinBy (другие категории): " + ("; ".join(alts) if alts else "не найдены"))
+    except Exception:
+        pass
+    lines.append(f"⏳ Ответа поставщика жду до {POLL_TIMEOUT / 3600:g} ч, к запасному перехожу только при отказе.")
     rules = {}
     for v in _config.get("ggsel_products", {}).values():
         if isinstance(v, dict) and v.get("g2_fallback"):
@@ -901,7 +965,7 @@ def _buy_ids_ex(invoice_id, idx, label, ids, player_id):
         key = f"ggsel-{invoice_id}-{idx}-{pid}"
         body = {"product_id": pid, "qty": 1, "player_id": player_id}
         order = None
-        for attempt in range(3):
+        for attempt in range(NET_RETRIES):
             try:
                 order = epinby_post("/order", body, idem_key=key)
                 break
@@ -914,7 +978,7 @@ def _buy_ids_ex(invoice_id, idx, label, ids, player_id):
             except Exception as e:
                 # сеть: заказ мог создаться, поэтому повторяем с ТЕМ ЖЕ ключом - дубля не будет
                 last_err = f"{size} (товар {pid}): сеть: {_hide(e)[:150]}"
-                time.sleep(5)
+                time.sleep(min(5 * 2 ** attempt, 120))
         if order is None:
             if "сеть" in last_err:
                 # не знаем, создан ли заказ - запасной брать нельзя, иначе возможна двойная выдача
@@ -923,31 +987,59 @@ def _buy_ids_ex(invoice_id, idx, label, ids, player_id):
             print(f"Заказ {invoice_id}: {last_err}, пробую запасной")
             continue
 
-        status = _wait_order(order.get("order_id"), order.get("status"))
-        if status == "COMPLETED":
+        status = _wait_order(order.get("order_id"), order.get("status"), notice=lambda m, pid=pid: _notify(
+            f"⏳ Заказ {invoice_id}: {size} — EpinBy выполняет уже {m} мин, жду окончательного ответа "
+            f"(до {POLL_TIMEOUT / 3600:g} ч). Вручную не выдавайте, чтобы не было дубля."))
+        if status in EP_DONE:
             print(f"Заказ {invoice_id}: {size} выдано (товар {pid}, EpinBy #{order.get('order_id')})")
             return True, pid, None, False
         last_err = f"{size} (товар {pid}, EpinBy #{order.get('order_id')}): статус {status}"
-        if status not in ("FAILED", "CANCELED"):
-            # TIMEOUT и прочее: заказ ещё может выполниться - запасной не берём, чтобы не выдать дважды
+        if status not in EP_FAILED:
+            # не дождались ответа: заказ ещё может выполниться - запасной не берём, чтобы не выдать дважды
             return False, pid, last_err + " (долго выполняется, проверьте в EpinBy)", False
         errors.append(last_err)
         print(f"Заказ {invoice_id}: {last_err}, пробую запасной")
     return False, None, "; ".join(errors) or last_err, True
 
 
-def _wait_order(order_id, status):
-    deadline = time.time() + POLL_TIMEOUT
-    status = (status or "").upper()
-    while status not in ("COMPLETED", "CANCELED", "FAILED"):
-        if time.time() > deadline:
+def _poll(get_status, final, label="", notice=None):
+    """
+    Ждёт окончательного статуса заказа у поставщика (до POLL_TIMEOUT).
+    Сначала проверяет часто, потом реже. Через WAIT_NOTICE один раз зовёт notice(минуты).
+    -> статус или "TIMEOUT".
+    """
+    start = time.time()
+    noticed = False
+    status = ""
+    first = True
+    while True:
+        if not first or status == "":
+            try:
+                status = (get_status() or "").upper()
+            except Exception as e:
+                print(f"{label}: статус не получен:", _hide(e)[:150])
+        first = False
+        if status in final:
+            return status
+        elapsed = time.time() - start
+        if elapsed > POLL_TIMEOUT:
             return "TIMEOUT"
-        time.sleep(POLL_EVERY)
-        try:
-            status = (epinby_get(f"/order/{order_id}").get("status") or "").upper()
-        except Exception as e:
-            print(f"EpinBy #{order_id}: статус не получен:", _hide(e)[:150])
-    return status
+        if notice and not noticed and elapsed > WAIT_NOTICE:
+            noticed = True
+            try:
+                notice(int(elapsed // 60))
+            except Exception:
+                pass
+        time.sleep(POLL_EVERY * (1 if elapsed < 600 else 4 if elapsed < 7200 else 20))
+
+
+def _wait_order(order_id, status, notice=None):
+    status = (status or "").upper()
+    if status in EP_DONE | EP_FAILED:
+        return "COMPLETED" if status in EP_DONE else status
+    status = _poll(lambda: epinby_get(f"/order/{order_id}").get("status"), EP_DONE | EP_FAILED,
+                   f"EpinBy #{order_id}", notice)
+    return "COMPLETED" if status in EP_DONE else status
 
 
 def _send_error_chat(invoice_id, text):
@@ -1077,17 +1169,12 @@ def _deliver_stars(invoice_id, product, info, resume=None):
 
 
 def _wait_stars(order_id, status):
-    deadline = time.time() + POLL_TIMEOUT
     status = (status or "").upper()
-    while status not in ("COMPLETED", "CANCELED", "FAILED"):
-        if time.time() > deadline:
-            return "TIMEOUT"
-        time.sleep(POLL_EVERY)
-        try:
-            status = (epinby_get(f"/telegram-stars/order/{order_id}").get("status") or "").upper()
-        except Exception as e:
-            print(f"EpinBy Stars #{order_id}: статус не получен:", _hide(e)[:150])
-    return status
+    if status in EP_DONE | EP_FAILED:
+        return "COMPLETED" if status in EP_DONE else status
+    status = _poll(lambda: epinby_get(f"/telegram-stars/order/{order_id}").get("status"), EP_DONE | EP_FAILED,
+                   f"EpinBy Stars #{order_id}")
+    return "COMPLETED" if status in EP_DONE else status
 
 
 # ---------------------------------------------------------------- G2Bulk
@@ -1466,18 +1553,8 @@ def _g2_buy_one(invoice_id, slot, game, name, player_id, server_id):
 
 
 def _g2_wait(order_id):
-    deadline = time.time() + POLL_TIMEOUT
-    while True:
-        try:
-            status = (g2bulk.get_order(order_id).get("status") or "").upper()
-        except Exception as e:
-            status = ""
-            print(f"G2Bulk #{order_id}: статус не получен:", _hide(e)[:150])
-        if status in ("COMPLETED", "FAILED"):
-            return status
-        if time.time() > deadline:
-            return "TIMEOUT"
-        time.sleep(POLL_EVERY)
+    status = _poll(lambda: g2bulk.get_order(order_id).get("status"), EP_DONE | EP_FAILED, f"G2Bulk #{order_id}")
+    return "COMPLETED" if status in EP_DONE else "FAILED" if status in EP_FAILED else status
 
 
 # ---------------------------------------------------------------- EpinBy: UC + наборы по названию
@@ -1868,7 +1945,7 @@ def _deliver_mix(invoice_id, product, info, resume=None):
             ok, err, via = _buy_uc_part(invoice_id, idx, part["uc"], part["ids"], player_id)
         elif rule:
             ok, err, via = _buy_with_fallback(
-                invoice_id, idx, part["label"], part["ids"], player_id,
+                invoice_id, idx, part["label"], _part_ids(invoice_id, idx, part["ids"]), player_id,
                 lambda part=part, idx=idx: _g2_part_buy(invoice_id, idx, part, rule, player_id))
         else:
             ok, _, err, definitive = _buy_ids_ex(invoice_id, idx, part["label"], part["ids"], player_id)

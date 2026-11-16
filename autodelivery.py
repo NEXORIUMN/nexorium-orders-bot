@@ -440,21 +440,16 @@ def _deliver(invoice_id, product, info, resume=None):
     est = sum(_config["uc_packs"][str(p)]["price"] for p in plan)
 
     # проверка игрока
-    first_pid = _config["uc_packs"][str(plan[0])]["ids"][0]
-    nickname = None
-    try:
-        v = epinby_post("/validate-player", {"product_id": first_pid, "player_id": player_id})
-        nickname = v.get("nickname") or v.get("player_name")
-    except EpinbyError as e:
-        if e.code == "VALIDATION_ERROR":
-            _set_status(invoice_id, status="manual", error="неверный ID")
-            if not DRY_RUN:
-                _send_error_chat(invoice_id, MSG_BAD_ID.format(player_id=player_id))
-            _notify(f"⚠️ Заказ {invoice_id}: EpinBy не нашёл игрока с ID {player_id}. "
-                    f"Покупателю не писал, выдайте вручную.\n"
-                    f"Ответ: {e.message}")
-            return
-        print(f"Заказ {invoice_id}: проверка игрока не удалась ({e.code}), продолжаю")
+    cands = [i for p in plan for i in _config["uc_packs"][str(p)]["ids"]]
+    cands += [i for k, v in _config["uc_packs"].items() if not k.startswith("_") for i in v.get("ids", [])]
+    verdict, nickname, answer = _check_player(cands, player_id, "pubg mobile")
+    if verdict == "bad":
+        _set_status(invoice_id, status="manual", error="неверный ID")
+        if not DRY_RUN:
+            _send_error_chat(invoice_id, MSG_BAD_ID.format(player_id=player_id))
+        _notify(f"⚠️ Заказ {invoice_id}: игрок с ID {player_id} не найден. "
+                f"Покупателю не писал, выдайте вручную.\nОтвет: {answer}")
+        return
 
     who = f"{player_id}" + (f" ({nickname})" if nickname else "")
     if DRY_RUN:
@@ -1040,6 +1035,48 @@ def _wait_order(order_id, status, notice=None):
     status = _poll(lambda: epinby_get(f"/order/{order_id}").get("status"), EP_DONE | EP_FAILED,
                    f"EpinBy #{order_id}", notice)
     return "COMPLETED" if status in EP_DONE else status
+
+
+def _is_product_error(message):
+    """«The selected product id is invalid» — это про товар (снят с продажи), а не про игрока."""
+    low = str(message or "").lower()
+    return "product" in low or "товар" in low
+
+
+def _check_player(pids, player_id, g2_rule=None):
+    """
+    Проверка ID игрока. -> ("ok"|"bad"|"unknown", ник, ответ).
+    EpinBy проверяет через товар; если товар снят («product id is invalid») — пробуем следующий.
+    Если EpinBy проверить не смог — спрашиваем G2Bulk. "unknown" — проверить не удалось, выдаём дальше:
+    с неверным ID поставщики сами откажут, и заказ уйдёт на ручную выдачу.
+    """
+    seen, tried = set(), 0
+    for pid in pids:
+        if pid in seen or tried >= 6:
+            continue
+        seen.add(pid)
+        tried += 1
+        try:
+            v = epinby_post("/validate-player", {"product_id": pid, "player_id": player_id})
+            return "ok", v.get("nickname") or v.get("player_name"), None
+        except EpinbyError as e:
+            if e.code == "VALIDATION_ERROR" and not _is_product_error(e.message):
+                return "bad", None, f"EpinBy: {e.message}"
+            print(f"Проверка игрока через товар {pid}: {e.code} {e.message} — пробую другой")
+        except Exception as e:
+            print(f"Проверка игрока через товар {pid}: {_hide(e)[:120]}")
+    if g2_rule and g2bulk.KEY:
+        try:
+            game = _g2_game_for({"match": g2_rule} if " " in str(g2_rule) else {"game": g2_rule})
+            if game:
+                ok, name = g2bulk.check_player(game, player_id)
+                if ok is True:
+                    return "ok", name, None
+                if ok is False:
+                    return "bad", None, "G2Bulk: игрок не найден"
+        except Exception as e:
+            print("Проверка игрока в G2Bulk:", _hide(e)[:120])
+    return "unknown", None, None
 
 
 def _send_error_chat(invoice_id, text):
@@ -1917,17 +1954,16 @@ def _deliver_mix(invoice_id, product, info, resume=None):
 
     plan_text = " + ".join(p["label"] for p in plan)
     est = sum(p.get("price") or 0 for p in plan)
-    nickname = None
-    try:
-        v = epinby_post("/validate-player", {"product_id": plan[0]["ids"][0], "player_id": player_id})
-        nickname = v.get("nickname") or v.get("player_name")
-    except EpinbyError as e:
-        if e.code == "VALIDATION_ERROR":
-            _set_status(invoice_id, status="manual", error="неверный ID")
-            _notify(f"⚠️ Заказ {invoice_id} ({title}): EpinBy не нашёл игрока с ID {player_id}. "
-                    f"Покупателю не писал, выдайте вручную.\nОтвет: {e.message}")
-            return
-        print(f"Заказ {invoice_id}: проверка игрока не удалась ({e.code}), продолжаю")
+    cands = [i for p in plan for i in p["ids"]]
+    if any(p.get("uc") for p in plan) or (product.get("g2_fallback") or {}).get("match") == "pubg mobile":
+        cands += [i for k, v in _config["uc_packs"].items() if not k.startswith("_") for i in v.get("ids", [])]
+    rule = product.get("g2_fallback") or {}
+    verdict, nickname, answer = _check_player(cands, player_id, rule.get("match") or rule.get("game"))
+    if verdict == "bad":
+        _set_status(invoice_id, status="manual", error="неверный ID")
+        _notify(f"⚠️ Заказ {invoice_id} ({title}): игрок с ID {player_id} не найден. "
+                f"Покупателю не писал, выдайте вручную.\nОтвет: {answer}")
+        return
     who = f"{player_id}" + (f" ({nickname})" if nickname else "")
 
     if _mix_dry(product):
